@@ -1,0 +1,15 @@
+# Install on the GPU machine that will actually run models:
+#   pip install -e ".[model,plot]"
+# or:
+#   pip install -r requirements-model.txt
+#
+# This is intentionally separate from pyproject.toml's core deps so that
+# the pure-logic tests (tests/test_cos_sim.py, tests/test_compare.py) can
+# run on any machine -- including CI, including a laptop with no GPU --
+# without needing a multi-GB torch/transformers install.
+
+torch>=2.0
+transformers>=4.40
+accelerate>=0.29
+tqdm>=4.65
+matplotlib>=3.7

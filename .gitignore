@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Run outputs (large, machine-specific -- share via comparison reports / logs,
+# not raw pickles, unless you specifically want to commit a small reference file
+# the way reference/all_cos_phi3_authors.pkl is committed here)
+results/*
+!results/.gitkeep
+
+# Model caches, if pointed at a local dir
+models/
+*.safetensors
+*.bin
+
+# OS
+.DS_Store

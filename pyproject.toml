@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safety-layers-repro"
+version = "0.1.0"
+description = "Modular reproduction of the safety-layers cosine-similarity analysis from Li et al., ICLR 2025 (arXiv:2408.17003)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Needed only to actually run models (GPU machine). Kept separate so the
+# pure-logic tests can run anywhere without a multi-GB torch/transformers
+# install.
+model = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "accelerate>=0.29",
+    "tqdm>=4.65",
+]
+plot = [
+    "matplotlib>=3.7",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+safety_layers_repro = ["*.json"]
