@@ -26,7 +26,7 @@ class CosSimConfig:
     # --- model ---
     model_path: str = "microsoft/Phi-3-mini-4k-instruct"
     prompt_template: str = "alpaca"  # matches Code/templates/alpaca.json in the original repo
-    trust_remote_code: bool = True
+    trust_remote_code: bool = False  # see docs/KNOWN_DISCREPANCIES.md #8
     device_map: str = "auto"
     dtype: str = "auto"  # "auto" | "float16" | "bfloat16" | "float32"
 

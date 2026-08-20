@@ -149,7 +149,10 @@ def get_last_position_hidden_states(
     for i in range(len(step0_layers)):
         if i == 0:
             continue  # skip embedding layer, matches original script
-        vectors.append(step0_layers[i][0][-1].detach().cpu().numpy())
+        # .numpy() doesn't support bfloat16 directly (e.g. under dtype=auto,
+        # which resolves to this model's default torch_dtype); cast to
+        # float32 first. No-op for configs already running in float32.
+        vectors.append(step0_layers[i][0][-1].detach().to(torch.float32).cpu().numpy())
     return vectors
 
 

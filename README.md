@@ -79,6 +79,41 @@ python -m safety_layers_repro.run_cos_sim --config configs/phi3_cossim.yaml --se
 
 Each run creates `results/<run_name>/` containing `all_cos.pkl` (the raw result) and `run_metadata.json` (full config + provenance).
 
+## Running on Kaggle (free GPU) via the API
+
+Instead of copy-pasting into the Kaggle notebook UI, `scripts/run_on_kaggle.sh`
+pushes `kaggle/kernel_runner.py` as a script kernel (GPU + internet on),
+polls until it finishes, and pulls the output back.
+
+Prereqs (one-time):
+- `pip install kaggle` (the classic 1.7.x client). Kaggle's newer 2.x CLI
+  and `KGAT_...` access-token auth are currently broken server-side (as of
+  2026-08-19: `/IntrospectToken` 404s, and even legacy `kaggle.json`
+  credentials get a 401 through its newer endpoints) -- the classic client
+  talking to Kaggle's REST API works fine, so stick with that for now.
+- Kaggle credentials at `~/.kaggle/kaggle.json`: kaggle.com > Settings >
+  API > "Create New API Token". Never paste credential values into a
+  chat/log -- run the save command yourself.
+- (Optional) A Hugging Face token as a Kaggle Secret named `HF_TOKEN`
+  (kernel editor > Add-ons > Secrets, enabled for this kernel). Not
+  required for the default model -- `microsoft/Phi-3-mini-4k-instruct` is
+  ungated -- `kernel_runner.py` skips login if it's absent. Only needed if
+  you switch `model_path` to a gated model (Llama-2/3, see
+  `docs/REPRODUCTION_SPEC.md`).
+
+```bash
+./scripts/run_on_kaggle.sh
+```
+
+The kernel (`kaggle/kernel_runner.py`) clones this repo fresh, installs
+`.[model,plot]`, logs into Hugging Face, runs the smoketest config, and if
+that succeeds, runs the full `configs/phi3_cossim.yaml` (r=500,
+`dtype=float32`, fidelity-matched to the paper). If the full run hits CUDA
+OOM on Kaggle's 16GB T4, it retries once with `--set dtype=auto` and drops
+an `OOM_FALLBACK_DEVIATION.txt` marker next to that run's output — treat
+those results as a noted deviation, not a float32-fidelity match, when
+filling in `docs/REPLICATION_LOG.md`.
+
 ## Comparing runs
 
 ```bash

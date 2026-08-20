@@ -9,9 +9,11 @@ malicious_path: data/malicious.csv
 
 model_path: microsoft/Phi-3-mini-4k-instruct
 prompt_template: alpaca
-trust_remote_code: true
+trust_remote_code: false  # see docs/KNOWN_DISCREPANCIES.md #8: remote code
+                          # incompatible with newer transformers releases
 device_map: auto
-dtype: auto
+dtype: float32   # fidelity-matched to the paper authors' setup; do not change here —
+                 # OOM fallback (if needed) is a runtime --set dtype=auto override, not a config edit
 
 temperature: 0.5
 top_p: 0.2
