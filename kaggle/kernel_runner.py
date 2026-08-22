@@ -116,25 +116,46 @@ def ensure_gpu_compatible_torch():
     sh([sys.executable, "-m", "pip", "uninstall", "-y", "torchvision", "torchaudio"])
 
 
+HF_TOKEN_SECRET_NAMES = ["HF_TOKEN", "GEMINI_TOKEN"]
+
+
 def hf_login():
     """Log into Hugging Face if a token is available. Best-effort: skip
-    quietly if no HF_TOKEN secret/env var is set, rather than failing the
-    whole run -- correct for ungated models (e.g. Phi-3-mini) but for a
-    gated model (gemma, Llama) a missing token means the model download
-    will fail later with its own clear permission error, not silently."""
+    quietly if no token is found, rather than failing the whole run --
+    correct for ungated models (e.g. Phi-3-mini) but for a gated model
+    (gemma, Llama) a missing/wrong token means the model download will
+    fail later with its own clear permission error, not silently.
+
+    Checks a couple of possible Kaggle Secret names (HF_TOKEN_SECRET_NAMES)
+    since it's easy to save the right kind of credential under the wrong
+    label. Note: whatever the secret is named, its VALUE must be a real
+    Hugging Face access token (huggingface.co/settings/tokens, usually
+    starts with hf_...) -- a Google Gemini/AI-Studio API key is a
+    different credential for a different service and will not work here
+    regardless of what the secret is called."""
     token = os.environ.get("HF_TOKEN")
+    source = "HF_TOKEN env var" if token else None
     if not token:
         try:
             from kaggle_secrets import UserSecretsClient
-            token = UserSecretsClient().get_secret("HF_TOKEN")
+            client = UserSecretsClient()
+            for name in HF_TOKEN_SECRET_NAMES:
+                try:
+                    token = client.get_secret(name)
+                    source = f"Kaggle Secret '{name}'"
+                    break
+                except Exception:
+                    continue
         except Exception:
             token = None
     if not token:
-        print("[kernel_runner] No HF_TOKEN found -- skipping HF login "
-              "(fine for ungated models; required for gated ones like "
-              "gemma/Llama, in which case the model download will fail "
-              "next with a permission error).")
+        print(f"[kernel_runner] No token found under any of {HF_TOKEN_SECRET_NAMES} "
+              "or HF_TOKEN env var -- skipping HF login (fine for ungated "
+              "models; required for gated ones like gemma/Llama, in which "
+              "case the model download will fail next with a permission error).")
         return
+    print(f"[kernel_runner] Found a token via {source}. Attempting HF login "
+          "(this will fail clearly below if it's not a valid Hugging Face token).")
     from huggingface_hub import login
     login(token=token)
     print("[kernel_runner] Hugging Face login OK.")
