@@ -1,0 +1,29 @@
+# Same as llama3_cossim.yaml but with r=20 instead of 500, for a fast
+# pipeline sanity check on a GPU box before committing to the full r=500
+# run. NOT a substitute for the full run -- results here will be noisy
+# and should not be compared against the paper's numbers or used to fill
+# in the replication log's "reproduction" row.
+
+normal_path: data/normal.csv
+malicious_path: data/malicious.csv
+
+model_path: meta-llama/Meta-Llama-3-8B-Instruct
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: auto
+
+temperature: 0.5
+top_p: 0.2
+top_k: 40
+num_beams: 4
+max_new_tokens: 1
+pad_token_id: 0
+
+r: 20
+seed_nn: 10
+seed_mm: 100
+seed_nm: 1000
+
+save_dir: results/
+run_name: null
