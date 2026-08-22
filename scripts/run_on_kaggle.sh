@@ -16,16 +16,25 @@
 #     separate KAGGLE_USERNAME env var is needed).
 #   - An HF_TOKEN Kaggle Secret added to your account (kernel editor >
 #     Add-ons > Secrets) -- this can't be set via the API, it's a one-time
-#     manual step on kaggle.com
+#     manual step on kaggle.com, and must be enabled PER KERNEL SLUG (a
+#     new model prefix here creates a new kernel the first time, which
+#     needs the secret enabled again even if it's already on your account).
 #
 # Usage:
-#   ./scripts/run_on_kaggle.sh
+#   ./scripts/run_on_kaggle.sh [model-prefix]
+#   model-prefix matches configs/<prefix>_cossim.yaml (default: phi3)
 set -euo pipefail
 
+MODEL_PREFIX="${1:-phi3}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KAGGLE_DIR="$REPO_ROOT/kaggle"
 PUSH_DIR="$(mktemp -d)"
 trap 'rm -rf "$PUSH_DIR"' EXIT
+
+if [[ ! -f "$REPO_ROOT/configs/${MODEL_PREFIX}_cossim.yaml" ]]; then
+  echo "ERROR: configs/${MODEL_PREFIX}_cossim.yaml not found." >&2
+  exit 1
+fi
 
 command -v kaggle >/dev/null 2>&1 || {
   echo "ERROR: 'kaggle' CLI not found. Run: pip install kaggle (with a" >&2
@@ -53,12 +62,14 @@ else
   exit 1
 fi
 
-KERNEL_SLUG="safety-layers-cossim-repro"
+KERNEL_SLUG="safety-layers-cossim-repro-${MODEL_PREFIX}"
 KERNEL_ID="$USERNAME/$KERNEL_SLUG"
 
-echo "== Pushing kernel $KERNEL_ID =="
-cp "$KAGGLE_DIR/kernel_runner.py" "$PUSH_DIR/"
-sed "s#KAGGLE_USERNAME/safety-layers-cossim-repro#$KERNEL_ID#" \
+echo "== Pushing kernel $KERNEL_ID (model prefix: $MODEL_PREFIX) =="
+sed "s/^MODEL_CONFIG_PREFIX = \"phi3\"/MODEL_CONFIG_PREFIX = \"${MODEL_PREFIX}\"/" \
+  "$KAGGLE_DIR/kernel_runner.py" > "$PUSH_DIR/kernel_runner.py"
+sed -e "s#KAGGLE_USERNAME/safety-layers-cossim-repro#$KERNEL_ID#" \
+    -e "s#\"title\": \"safety-layers-cossim-repro\"#\"title\": \"$KERNEL_SLUG\"#" \
   "$KAGGLE_DIR/kernel-metadata.json.template" > "$PUSH_DIR/kernel-metadata.json"
 
 kaggle kernels push -p "$PUSH_DIR"

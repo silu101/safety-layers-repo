@@ -12,16 +12,22 @@ What this does, in order:
      P100 (incompatible with the preinstalled torch build -- see
      docs/KNOWN_DISCREPANCIES.md #9), reinstall a torch/CUDA combo that
      still supports it. Logged as an environment deviation, not silent.
-  4. Log into Hugging Face using an HF_TOKEN Kaggle Secret (or env var).
-  5. Run the smoketest config (configs/phi3_cossim_smoketest.yaml, r=20).
-     If this fails, stop -- do NOT attempt the full run on an unverified
-     pipeline.
-  6. Run the full config (configs/phi3_cossim.yaml, r=500, dtype=float32,
-     fidelity-matched to the paper). If this hits CUDA OOM (float32 Phi-3
-     needs ~15-20GB VRAM, Kaggle's free T4 has 16GB), retry ONCE with
-     --set dtype=auto. This fallback is clearly flagged -- in stdout, and
-     in a marker file dropped next to the run's output -- as a deviation
-     from the float32 fidelity target, never silently treated as a match.
+  4. Log into Hugging Face using an HF_TOKEN Kaggle Secret (or env var) --
+     required if MODEL_CONFIG_PREFIX points at a gated model (e.g. gemma,
+     Llama), best-effort/skippable for ungated ones (e.g. Phi-3).
+  5. Run the smoketest config (configs/<prefix>_cossim_smoketest.yaml,
+     r=20). If this fails, stop -- do NOT attempt the full run on an
+     unverified pipeline.
+  6. Run the full config (configs/<prefix>_cossim.yaml, r=500,
+     dtype=float32, fidelity-matched to the paper). If this hits CUDA OOM
+     (float32 needs ~15-20GB VRAM for a model this size, Kaggle's free T4
+     has 16GB), retry ONCE with --set dtype=auto. This fallback is clearly
+     flagged -- in stdout, and in a marker file dropped next to the run's
+     output -- as a deviation from the float32 fidelity target, never
+     silently treated as a match.
+
+MODEL_CONFIG_PREFIX below is substituted by scripts/run_on_kaggle.sh
+before each push (e.g. "phi3", "gemma") -- do not hardcode a model here.
 """
 import os
 import subprocess
@@ -30,6 +36,7 @@ from pathlib import Path
 
 REPO_URL = "https://github.com/silu101/safety-layers-repo"
 REPO_DIR = Path("/kaggle/working/safety-layers-repro")
+MODEL_CONFIG_PREFIX = "phi3"
 
 
 def sh(cmd, **kw):
@@ -110,11 +117,11 @@ def ensure_gpu_compatible_torch():
 
 
 def hf_login():
-    """Log into Hugging Face if a token is available. Not required for this
-    repo's default model (microsoft/Phi-3-mini-4k-instruct is ungated), so
-    this is best-effort: skip quietly if no HF_TOKEN secret/env var is set,
-    rather than failing the whole run. Needed only if model_path is changed
-    to a gated model (e.g. Llama-2/3 -- see docs/REPRODUCTION_SPEC.md)."""
+    """Log into Hugging Face if a token is available. Best-effort: skip
+    quietly if no HF_TOKEN secret/env var is set, rather than failing the
+    whole run -- correct for ungated models (e.g. Phi-3-mini) but for a
+    gated model (gemma, Llama) a missing token means the model download
+    will fail later with its own clear permission error, not silently."""
     token = os.environ.get("HF_TOKEN")
     if not token:
         try:
@@ -124,8 +131,9 @@ def hf_login():
             token = None
     if not token:
         print("[kernel_runner] No HF_TOKEN found -- skipping HF login "
-              "(fine for ungated models like Phi-3-mini; required if you "
-              "switch to a gated model).")
+              "(fine for ungated models; required for gated ones like "
+              "gemma/Llama, in which case the model download will fail "
+              "next with a permission error).")
         return
     from huggingface_hub import login
     login(token=token)
@@ -134,8 +142,10 @@ def hf_login():
 
 def run_smoketest():
     from safety_layers_repro import run_cos_sim
-    print("[kernel_runner] Running smoketest config (r=20)...")
-    out_path = run_cos_sim.main(["--config", "configs/phi3_cossim_smoketest.yaml"])
+    print(f"[kernel_runner] Running smoketest config for {MODEL_CONFIG_PREFIX} (r=20)...")
+    out_path = run_cos_sim.main(
+        ["--config", f"configs/{MODEL_CONFIG_PREFIX}_cossim_smoketest.yaml"]
+    )
     print(f"[kernel_runner] Smoketest OK: {out_path}")
 
 
@@ -151,9 +161,10 @@ def _is_oom(exc: BaseException) -> bool:
 
 def run_full():
     from safety_layers_repro import run_cos_sim
-    print("[kernel_runner] Running full config (r=500, dtype=float32, fidelity-matched)...")
+    full_config = f"configs/{MODEL_CONFIG_PREFIX}_cossim.yaml"
+    print(f"[kernel_runner] Running full config for {MODEL_CONFIG_PREFIX} (r=500, dtype=float32, fidelity-matched)...")
     try:
-        out_path = run_cos_sim.main(["--config", "configs/phi3_cossim.yaml"])
+        out_path = run_cos_sim.main(["--config", full_config])
         print(f"[kernel_runner] Full run OK (float32 fidelity-matched): {out_path}")
         return
     except Exception as e:
@@ -171,9 +182,7 @@ def run_full():
         except ImportError:
             pass
 
-    out_path = run_cos_sim.main(
-        ["--config", "configs/phi3_cossim.yaml", "--set", "dtype=auto"]
-    )
+    out_path = run_cos_sim.main(["--config", full_config, "--set", "dtype=auto"])
     marker = Path(out_path).parent / "OOM_FALLBACK_DEVIATION.txt"
     marker.write_text(
         "DEVIATION FROM SPEC: this run hit CUDA OOM at dtype=float32 (the paper\n"
