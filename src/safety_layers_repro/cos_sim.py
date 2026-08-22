@@ -127,11 +127,19 @@ def get_last_position_hidden_states(
     device = next(model.parameters()).device
     input_ids = inputs["input_ids"].to(device)
 
+    # NOTE: num_beams is intentionally NOT passed here, even though cfg.num_beams
+    # exists and defaults to 4. The original script (save_all_pairs_cos_sim.py)
+    # takes num_beams as a get_output() parameter but never actually forwards it
+    # into GenerationConfig or generate() -- a bug in the authors' own code that
+    # makes their real executed behavior plain greedy decoding (num_beams=1,
+    # do_sample defaults to False so temperature/top_p/top_k are inert too),
+    # not the beam search the parameter name implies. See
+    # docs/KNOWN_DISCREPANCIES.md #10. We match their ACTUAL behavior, not their
+    # apparent intent, since that's what generated the paper's real numbers.
     generation_config = GenerationConfig(
         temperature=cfg.temperature,
         top_p=cfg.top_p,
         top_k=cfg.top_k,
-        num_beams=cfg.num_beams,
         pad_token_id=cfg.pad_token_id,
     )
     with torch.no_grad():
