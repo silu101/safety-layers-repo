@@ -144,9 +144,13 @@ def hf_login():
                     token = client.get_secret(name)
                     source = f"Kaggle Secret '{name}'"
                     break
-                except Exception:
+                except Exception as e:
+                    print(f"[kernel_runner] get_secret('{name}') failed: "
+                          f"{type(e).__name__}: {e}")
                     continue
-        except Exception:
+        except Exception as e:
+            print(f"[kernel_runner] Could not import/use kaggle_secrets: "
+                  f"{type(e).__name__}: {e}")
             token = None
     if not token:
         print(f"[kernel_runner] No token found under any of {HF_TOKEN_SECRET_NAMES} "
