@@ -1,0 +1,25 @@
+# Same as gemma_localization.yaml but truncated to 20 prompts, for a fast
+# pipeline sanity check before committing to the full 731-prompt run.
+
+over_rejection_path: data/over_rejection.csv
+max_prompts: 20
+
+model_path: google/gemma-2b-it
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: float32
+weight_style: llama
+
+temperature: 0.0
+top_p: 0.2
+top_k: 40
+max_new_tokens: 16
+pad_token_id: 0
+
+start_num: 8
+end_num: 11
+cheng_num: 1.1
+
+save_dir: results/
+run_name: null

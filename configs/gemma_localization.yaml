@@ -1,0 +1,30 @@
+# Config for Section 3.4 safety-layer localization on gemma-2b-it.
+# Method extracted from Code/Safety_layers_locating/scaling.py -- see
+# docs/REPRODUCTION_SPEC_3.4.md. Target range [8, 11) is the paper's own
+# Table 1 range for gemma-2b-it -- this run tests whether scaling THIS
+# range produces a measurably higher over-rejection rate than a baseline/
+# control range (see gemma_localization_baseline.yaml,
+# gemma_localization_control.yaml).
+
+over_rejection_path: data/over_rejection.csv
+max_prompts: null   # use all 731 rows for the full run
+
+model_path: google/gemma-2b-it
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: float32
+weight_style: llama   # gemma shares Llama's separate q/k/v/o + up/gate/down layout
+
+temperature: 0.0
+top_p: 0.2
+top_k: 40
+max_new_tokens: 16
+pad_token_id: 0
+
+start_num: 8
+end_num: 11
+cheng_num: 1.1   # scaling multiplier, matches scaling.py's default
+
+save_dir: results/
+run_name: null

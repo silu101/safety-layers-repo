@@ -1,0 +1,31 @@
+# Control range for Section 3.4 localization on gemma-2b-it: scales layers
+# [14, 17) -- outside the paper's Table 1 safety-layer range [8, 11) for
+# this model, and outside gemma-2b-it's 18 total layers' likely-safety-
+# relevant middle band per our own Section 3.2-3.3 gap-onset finding
+# (layer 9). If scaling this range does NOT produce a comparable
+# over-rejection spike to gemma_localization.yaml's [8,11) run, that
+# supports the localization claim being range-specific, not just "any
+# scaling increases refusals."
+
+over_rejection_path: data/over_rejection.csv
+max_prompts: null
+
+model_path: google/gemma-2b-it
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: float32
+weight_style: llama
+
+temperature: 0.0
+top_p: 0.2
+top_k: 40
+max_new_tokens: 16
+pad_token_id: 0
+
+start_num: 14
+end_num: 17
+cheng_num: 1.1
+
+save_dir: results/
+run_name: null

@@ -1,0 +1,28 @@
+# Baseline (no scaling applied) for Section 3.4 localization on gemma-2b-it.
+# start_num == end_num means range(start_num, end_num) is empty, so
+# build_scaled_model() deep-copies the model but scales nothing -- this is
+# the unscaled over-rejection rate to compare the target-range and
+# control-range runs against.
+
+over_rejection_path: data/over_rejection.csv
+max_prompts: null
+
+model_path: google/gemma-2b-it
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: float32
+weight_style: llama
+
+temperature: 0.0
+top_p: 0.2
+top_k: 40
+max_new_tokens: 16
+pad_token_id: 0
+
+start_num: 0
+end_num: 0
+cheng_num: 1.1
+
+save_dir: results/
+run_name: null
