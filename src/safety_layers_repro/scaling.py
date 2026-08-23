@@ -88,12 +88,41 @@ def load_model_and_tokenizer(cfg: LocalizationConfig):
     return model, tokenizer
 
 
+_LLAMA_STYLE_ATTRS = [
+    ("self_attn", "q_proj"), ("self_attn", "k_proj"),
+    ("self_attn", "v_proj"), ("self_attn", "o_proj"),
+    ("mlp", "up_proj"), ("mlp", "gate_proj"), ("mlp", "down_proj"),
+]
+_PHI3_STYLE_ATTRS = [
+    ("self_attn", "qkv_proj"), ("self_attn", "o_proj"),
+    ("mlp", "gate_up_proj"), ("mlp", "down_proj"),
+]
+
+
 def build_scaled_model(model, cfg: LocalizationConfig):
     """Both `base_model` and `chat_model` in the original script are loaded
     from the SAME model_path -- this isn't a base-vs-aligned comparison, it's
-    pure self-scaling of one model's own weights in [start_num, end_num)."""
-    scaler = scaling_phi3_style if cfg.weight_style == "phi3" else scaling_llama_style
-    return scaler(model, model, cfg.start_num, cfg.end_num, cfg.cheng_num)
+    pure self-scaling of one model's own weights in [start_num, end_num).
+
+    scaling_llama_style()/scaling_phi3_style() above are kept as faithful,
+    verbatim ports of the original deep-copy-then-overwrite approach for
+    documentation purposes, but aren't used here: since base_model and
+    chat_model are always the same object in our usage, deep-copying before
+    scaling means holding two full model copies in GPU memory at once for
+    no benefit (we don't need the unmodified original afterward) -- this
+    caused a real CUDA OOM on a 16GB T4 for a model that alone fits
+    comfortably. Scaling in-place produces IDENTICAL final weights (same
+    math: new_value = old_value * cheng_num) using half the memory."""
+    import torch
+
+    attrs = _PHI3_STYLE_ATTRS if cfg.weight_style == "phi3" else _LLAMA_STYLE_ATTRS
+    with torch.no_grad():
+        for i in range(cfg.start_num, cfg.end_num):
+            layer = model.model.layers[i]
+            for parent_name, proj_name in attrs:
+                proj = getattr(getattr(layer, parent_name), proj_name)
+                proj.weight.mul_(cfg.cheng_num)
+    return model
 
 
 def get_output(model, tokenizer, prompter: Prompter, instruction: str, cfg: LocalizationConfig) -> str:
