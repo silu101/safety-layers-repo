@@ -27,6 +27,10 @@ model = [
 plot = [
     "matplotlib>=3.7",
 ]
+eval = [
+    # Needed only for harmful_score.py's LLM-judge scoring (Section 4).
+    "anthropic>=0.40",
+]
 dev = [
     "pytest>=7.0",
 ]
