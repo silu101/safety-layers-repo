@@ -9,8 +9,8 @@ malicious_path: data/malicious.csv
 
 model_path: microsoft/Phi-3-mini-4k-instruct
 prompt_template: alpaca
-trust_remote_code: false  # see docs/KNOWN_DISCREPANCIES.md #8: remote code
-                          # incompatible with newer transformers releases
+trust_remote_code: true  # reverted 2026-08-23, see phi3_cossim.yaml comment
+                         # and docs/KNOWN_DISCREPANCIES.md #8
 device_map: auto
 dtype: auto
 

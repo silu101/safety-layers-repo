@@ -8,17 +8,21 @@ What this does, in order:
      configs/*.yaml resolve, and results/ lands under /kaggle/working where
      Kaggle captures it as kernel output).
   2. pip install -e ".[model,plot]".
-  3. Check the assigned GPU's compute capability; if it's an old Tesla
+  3. If this model's config sets trust_remote_code: true, pin an older
+     transformers version compatible with its unpinned remote code (see
+     docs/KNOWN_DISCREPANCIES.md #8). No-op for configs using transformers'
+     own built-in model implementation.
+  4. Check the assigned GPU's compute capability; if it's an old Tesla
      P100 (incompatible with the preinstalled torch build -- see
      docs/KNOWN_DISCREPANCIES.md #9), reinstall a torch/CUDA combo that
      still supports it. Logged as an environment deviation, not silent.
-  4. Log into Hugging Face using an HF_TOKEN Kaggle Secret (or env var) --
+  5. Log into Hugging Face using an HF_TOKEN Kaggle Secret (or env var) --
      required if MODEL_CONFIG_PREFIX points at a gated model (e.g. gemma,
      Llama), best-effort/skippable for ungated ones (e.g. Phi-3).
-  5. Run the smoketest config (configs/<prefix>_cossim_smoketest.yaml,
+  6. Run the smoketest config (configs/<prefix>_cossim_smoketest.yaml,
      r=20). If this fails, stop -- do NOT attempt the full run on an
      unverified pipeline.
-  6. Run the full config (configs/<prefix>_cossim.yaml, r=500,
+  7. Run the full config (configs/<prefix>_cossim.yaml, r=500,
      dtype=float32, fidelity-matched to the paper). If this hits CUDA OOM
      (float32 needs ~15-20GB VRAM for a model this size, Kaggle's free T4
      has 16GB), retry ONCE with --set dtype=auto. This fallback is clearly
@@ -59,6 +63,31 @@ def install_package():
     sys.path.insert(0, str(REPO_DIR / "src"))
     import importlib
     importlib.invalidate_caches()
+
+
+def ensure_compatible_transformers_for_remote_code():
+    """If this model's config has trust_remote_code: true, pin an older
+    transformers version compatible with that remote code, instead of
+    Kaggle's very recent preinstalled one -- see docs/KNOWN_DISCREPANCIES.md
+    #8. Some models' custom modeling code (e.g. Phi-3's, fetched unpinned
+    from the HF Hub) hasn't been updated for newer transformers' internal
+    rope_scaling handling and crashes with a KeyError. This only fires for
+    configs that actually request trust_remote_code, so it doesn't affect
+    models running transformers' own built-in implementation."""
+    import yaml
+    full_config = f"configs/{MODEL_CONFIG_PREFIX}_cossim.yaml"
+    with open(full_config) as f:
+        cfg = yaml.safe_load(f)
+    if not cfg.get("trust_remote_code"):
+        return
+    print("=" * 70)
+    print(f"[kernel_runner] {full_config} sets trust_remote_code: true.")
+    print("[kernel_runner] Pinning transformers==4.44.2 (era before the")
+    print("[kernel_runner] rope_scaling refactor that breaks this model's")
+    print("[kernel_runner] unpinned remote code under newer transformers).")
+    print("[kernel_runner] See docs/KNOWN_DISCREPANCIES.md #8.")
+    print("=" * 70)
+    sh([sys.executable, "-m", "pip", "install", "transformers==4.44.2"])
 
 
 def ensure_gpu_compatible_torch():
@@ -226,6 +255,7 @@ def main():
     os.chdir("/kaggle/working")
     clone_repo()
     install_package()
+    ensure_compatible_transformers_for_remote_code()
     ensure_gpu_compatible_torch()
     os.chdir(str(REPO_DIR))
     hf_login()

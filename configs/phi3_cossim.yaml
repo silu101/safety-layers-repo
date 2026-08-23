@@ -9,8 +9,11 @@ malicious_path: data/malicious.csv
 
 model_path: microsoft/Phi-3-mini-4k-instruct
 prompt_template: alpaca
-trust_remote_code: false  # see docs/KNOWN_DISCREPANCIES.md #8: remote code
-                          # incompatible with newer transformers releases
+trust_remote_code: true  # reverted 2026-08-23 to test whether the
+                         # native-vs-remote-code switch (KNOWN_DISCREPANCIES.md
+                         # #8) explains the gap vs the paper's published Fig. 1
+                         # -- requires kernel_runner.py's transformers pin,
+                         # see KNOWN_DISCREPANCIES.md #8
 device_map: auto
 dtype: float32   # fidelity-matched to the paper authors' setup; do not change here —
                  # OOM fallback (if needed) is a runtime --set dtype=auto override, not a config edit
