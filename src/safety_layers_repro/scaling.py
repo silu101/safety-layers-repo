@@ -99,7 +99,7 @@ _PHI3_STYLE_ATTRS = [
 ]
 
 
-def build_scaled_model(model, cfg: LocalizationConfig):
+def build_scaled_model(model, cfg: LocalizationConfig, tokenizer=None):
     """Both `base_model` and `chat_model` in the original script are loaded
     from the SAME model_path -- this isn't a base-vs-aligned comparison, it's
     pure self-scaling of one model's own weights in [start_num, end_num).
@@ -122,6 +122,29 @@ def build_scaled_model(model, cfg: LocalizationConfig):
             for parent_name, proj_name in attrs:
                 proj = getattr(getattr(layer, parent_name), proj_name)
                 proj.weight.mul_(cfg.cheng_num)
+
+    # Matches the original script's post-scaling lines EXACTLY:
+    #   model.config.pad_token_id = tokenizer.pad_token_id = 0  # unk
+    #   model.config.bos_token_id = 1
+    #   model.config.eos_token_id = 2
+    # These are Llama-2 tokenizer conventions (id 0 repurposed as pad/unk,
+    # bos=1, eos=2), hardcoded unconditionally in main() regardless of
+    # which model is actually being scaled. For gemma specifically this is
+    # backwards from its real convention (bos=2, eos=1) -- a likely bug in
+    # the original script when applied to non-Llama-2 models. We port it
+    # verbatim anyway per this project's fidelity policy (see
+    # docs/KNOWN_DISCREPANCIES.md #14): `get_output()`'s actual generation
+    # call passes `eos_token_id=terminators` and an explicit
+    # `pad_token_id=cfg.pad_token_id` in GenerationConfig, both of which
+    # override these config values, so this line is very likely inert for
+    # generation behavior -- but we don't get to decide that ourselves
+    # without evidence, so it's set here exactly as the authors set it.
+    model.config.pad_token_id = 0
+    if tokenizer is not None:
+        tokenizer.pad_token_id = 0
+    model.config.bos_token_id = 1
+    model.config.eos_token_id = 2
+
     return model
 
 

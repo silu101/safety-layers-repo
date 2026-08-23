@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> Path:
         f"[safety_layers_repro] Scaling layers [{cfg.start_num}, {cfg.end_num}) "
         f"by {cfg.cheng_num} ({cfg.weight_style} style)"
     )
-    scaled_model = build_scaled_model(model, cfg)
+    scaled_model = build_scaled_model(model, cfg, tokenizer=tokenizer)
 
     print(f"[safety_layers_repro] Generating responses...")
     responses = run_localization_prompts(scaled_model, tokenizer, prompter, prompts, cfg)
