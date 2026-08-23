@@ -28,7 +28,21 @@ Model: gemma-2b-it (focus model, see project discussion). `data/over_rejection.c
 | control [14,17) | 1.15 | 731 | 59 | 64 | −63.0% |
 | control [14,17) | 1.2 | 731 | 34 | 35 | −79.8% |
 
-**Reading this**: the paper's claim (Section 3.4.2) predicts the *target* safety-layer range should show the sharpest over-rejection fluctuation under scaling, more than an arbitrary control range. Under the old (narrow, then Zou-derived) classifiers the target range did swing somewhat more than control at α=1.2 (96% vs 75% relative drop) -- weak support for the paper. Under the new classifier (closer to the paper's own described prefix-match design, broadened templates to fix the undercount), **the relationship reverses**: the control range's R_o drops far more sharply (up to −80%) than the target range's (up to −32%) at the same α. This is a striking, reportable result on its own: which classifier you use changes whether this reproduction appears to support or contradict the paper's core Section 3.4 claim. Not yet resolved which classifier is closer to what the authors actually used -- pending their email reply. Treat this row as a live, unresolved finding, not a settled negative result.
+**Reading this**: the paper's claim (Section 3.4.2) predicts the *target* safety-layer range should show the sharpest over-rejection fluctuation under scaling, more than an arbitrary control range. Under the old (narrow, then Zou-derived) classifiers the target range did swing somewhat more than control at α=1.2 (96% vs 75% relative drop) -- weak support for the paper. Under the new classifier (closer to the paper's own described prefix-match design, broadened templates to fix the undercount), **the relationship reverses**: the control range's R_o drops far more sharply (up to −80%) than the target range's (up to −32%) at the same α.
+
+**SUPERSEDED 2026-08-23**: the above used `start_num=8, end_num=11` (layers 8,9,10) as "target," which turned out to be neither the paper's initial cosine-similarity estimate nor its final answer -- see `KNOWN_DISCREPANCIES.md` #13. The corrected target range is `start_num=6, end_num=12` (layers 6-11), matching Appendix A.4.5's explicit "Safety Layers:[6,11]" label for gemma-2b-it. Re-ran the full sweep against the corrected range (same classifier, same 731 prompts, control range and baseline unchanged since they don't depend on this fix):
+
+| Range | α (cheng_num) | n | R_o | Δ from baseline |
+|---|---|---|---|---|
+| baseline (no scaling) | 1.0 | 731 | 173 | — |
+| **target [6,12) — corrected** | 1.1 | 731 | 242 | **+39.9%** |
+| **target [6,12) — corrected** | 1.15 | 731 | 286 | **+65.3%** |
+| **target [6,12) — corrected** | 1.2 | 731 | 306 | **+76.9%** |
+| control [14,17) | 1.1 | 731 | 95 | −45.1% |
+| control [14,17) | 1.15 | 731 | 64 | −63.0% |
+| control [14,17) | 1.2 | 731 | 35 | −79.8% |
+
+**This now matches the paper's predicted direction clearly.** With the correct layer range, over-rejection *rises* sharply and monotonically with α (+40% → +77%) -- the opposite trend from the (buggy) [8,11) target, and the opposite direction from the control range, which still *drops* as before. This is the first result in this reproduction that cleanly supports Section 3.4's core claim: scaling the paper's actual identified safety layers produces a distinctly different, opposite-direction effect from scaling an arbitrary control range. Caveat: the classifier's specific phrase list is still our own reconstruction (see #11), so the exact magnitudes aren't verified against the authors' own numbers -- but the qualitative direction (target rises, control falls, and they diverge with α) is now consistent with the paper for the first time in this reproduction.
 
 ## How to fill in a row
 
