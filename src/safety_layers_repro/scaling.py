@@ -114,10 +114,19 @@ def get_output(model, tokenizer, prompter: Prompter, instruction: str, cfg: Loca
         top_k=cfg.top_k,
         pad_token_id=cfg.pad_token_id,
     )
-    terminators = [tokenizer.eos_token_id]
-    eot_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
-    if eot_id is not None and eot_id != tokenizer.unk_token_id:
-        terminators.append(eot_id)
+    # Matches the original script's terminators list EXACTLY, including its
+    # own quirk: it always includes convert_tokens_to_ids("<|eot_id|>")
+    # regardless of model, even though only Llama-3 actually has that
+    # token. For other tokenizers this resolves to unk_token_id and gets
+    # added to eos_token_id as-is -- we deliberately don't guard against
+    # this, to match their real executed behavior rather than what seems
+    # more "correct" (see docs/KNOWN_DISCREPANCIES.md #10 for why: fixing
+    # an apparent bug in an earlier module changed nothing measurable, so
+    # fidelity to their literal code takes priority over inferred intent).
+    terminators = [
+        tokenizer.eos_token_id,
+        tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+    ]
 
     with torch.no_grad():
         out = model.generate(
