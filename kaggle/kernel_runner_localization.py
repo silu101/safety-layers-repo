@@ -13,15 +13,10 @@ What this does, in order:
   3. GPU compatibility check (P100 -> compatible torch), same as
      kernel_runner.py -- see docs/KNOWN_DISCREPANCIES.md #9.
   4. Log into Hugging Face if a token is available (best-effort).
-  5. Run all three configs in sequence: baseline (no scaling), target
-     range (paper's Table 1 range), control range (outside it) -- so R_o
-     is comparable across all three, not just reported for one run.
-     If the smoketest-scale run isn't requested separately, this uses the
-     full 731-prompt configs directly (unlike the cos_sim runner, there's
-     no separate smoketest-then-full gate here since the "smoketest"
-     config differs only in --set max_prompts, applied via CLI override
-     below rather than a distinct config file, so the exact-same code path
-     is exercised at both scales).
+  5. Run: smoketest (20 prompts, target range), baseline (no scaling,
+     full 731 prompts), then a sweep of target-range and control-range
+     runs at cheng_num in CHENG_NUM_SWEEP (full 731 prompts each) -- see
+     that constant's comment for why a sweep, not a single fixed value.
 
 MODEL_CONFIG_PREFIX below is substituted by scripts/run_localization_on_kaggle.sh
 before each push (e.g. "gemma") -- do not hardcode a model here.
@@ -122,12 +117,23 @@ def hf_login():
     print("[kernel_runner_localization] Hugging Face login OK.")
 
 
-def run_config(name: str, config_file: str, max_prompts: int | None = None):
+# Sweep alpha (cheng_num) rather than trusting the original script's
+# hardcoded default of 1.1. The paper (Section 3.4 appendix) describes
+# sweeping alpha in increments of 0.05 until the effect is clear, and its
+# own worked example uses alpha=1.2 for Llama-3-8B, not 1.1 -- our first
+# gemma run at 1.1 showed no clear target-vs-control separation, which is
+# consistent with 1.1 simply being too weak an amplification for this
+# model rather than the localization claim being wrong. See
+# docs/REPLICATION_LOG.md for the 1.1 result this is following up on.
+CHENG_NUM_SWEEP = [1.1, 1.15, 1.2]
+
+
+def run_config(name: str, config_file: str, extra_overrides: list[str] | None = None):
     from safety_layers_repro import run_localization
     args = ["--config", f"configs/{config_file}"]
-    if max_prompts is not None:
-        args += ["--set", f"max_prompts={max_prompts}"]
-    print(f"[kernel_runner_localization] Running {name} ({config_file})...")
+    for kv in extra_overrides or []:
+        args += ["--set", kv]
+    print(f"[kernel_runner_localization] Running {name} ({config_file}, {extra_overrides})...")
     out_path = run_localization.main(args)
     print(f"[kernel_runner_localization] {name} OK: {out_path}")
     return out_path
@@ -145,14 +151,28 @@ def main():
     print("=" * 70)
     print(f"[kernel_runner_localization] Smoketest pass ({SMOKETEST_MAX_PROMPTS} prompts, target range)")
     print("=" * 70)
-    run_config("smoketest", f"{MODEL_CONFIG_PREFIX}_localization.yaml", max_prompts=SMOKETEST_MAX_PROMPTS)
+    run_config(
+        "smoketest", f"{MODEL_CONFIG_PREFIX}_localization.yaml",
+        extra_overrides=[f"max_prompts={SMOKETEST_MAX_PROMPTS}"],
+    )
 
     print("=" * 70)
-    print("[kernel_runner_localization] Full runs (all 731 prompts): baseline, target, control")
+    print("[kernel_runner_localization] Baseline (no scaling, cheng_num irrelevant)")
     print("=" * 70)
     run_config("baseline", f"{MODEL_CONFIG_PREFIX}_localization_baseline.yaml")
-    run_config("target", f"{MODEL_CONFIG_PREFIX}_localization.yaml")
-    run_config("control", f"{MODEL_CONFIG_PREFIX}_localization_control.yaml")
+
+    for cheng in CHENG_NUM_SWEEP:
+        print("=" * 70)
+        print(f"[kernel_runner_localization] Sweep: cheng_num={cheng}")
+        print("=" * 70)
+        run_config(
+            f"target_cheng{cheng}", f"{MODEL_CONFIG_PREFIX}_localization.yaml",
+            extra_overrides=[f"cheng_num={cheng}"],
+        )
+        run_config(
+            f"control_cheng{cheng}", f"{MODEL_CONFIG_PREFIX}_localization_control.yaml",
+            extra_overrides=[f"cheng_num={cheng}"],
+        )
 
     print(f"[kernel_runner_localization] Done. Results under {REPO_DIR / 'results'}")
 
