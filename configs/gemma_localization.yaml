@@ -1,9 +1,15 @@
 # Config for Section 3.4 safety-layer localization on gemma-2b-it.
 # Method extracted from Code/Safety_layers_locating/scaling.py -- see
-# docs/REPRODUCTION_SPEC_3.4.md. Target range [8, 11) is the paper's own
-# Table 1 range for gemma-2b-it -- this run tests whether scaling THIS
-# range produces a measurably higher over-rejection rate than a baseline/
-# control range (see gemma_localization_baseline.yaml,
+# docs/REPRODUCTION_SPEC_3.4.md. Target range [6, 12) (layers 6-11
+# inclusive) is the paper's own FINAL confirmed safety-layer range for
+# gemma-2b-it -- see Appendix A.4.5's Table 8 label "Safety Layers:[6,11]"
+# and Table 1's boundary-search process (upper bound confirmed at 11,
+# lower bound confirmed at 6). A prior version of this config used
+# start_num=8, end_num=11 (layers 8,9,10 only) -- neither the paper's
+# initial cosine-similarity estimate nor its final answer. See
+# docs/KNOWN_DISCREPANCIES.md #13. This run tests whether scaling THIS
+# (corrected) range produces a measurably higher over-rejection rate than
+# a baseline/control range (see gemma_localization_baseline.yaml,
 # gemma_localization_control.yaml).
 
 over_rejection_path: data/over_rejection.csv
@@ -22,8 +28,8 @@ top_k: 40
 max_new_tokens: 16
 pad_token_id: 0
 
-start_num: 8
-end_num: 11
+start_num: 6
+end_num: 12
 cheng_num: 1.1   # scaling multiplier, matches scaling.py's default
 
 save_dir: results/
