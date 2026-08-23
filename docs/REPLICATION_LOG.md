@@ -14,6 +14,22 @@ row per run using `results/<run_name>/run_metadata.json` for the exact config.
 | 2026-08-20 | Full run (Kaggle, automated via API) | `configs/phi3_cossim.yaml` | Phi-3-mini-4k-instruct | 500 | Heuristic onset layer 15 (reference: 16) | vs. shipped demo reference (small-sample caveat applies, r=10): mean\|Δmean\| N-N 0.031, M-M 0.018, N-M 0.052; max\|Δmean\| N-N 0.43, M-M 0.10, N-M 0.46; Pearson r (mean curves) 0.83 (N-N), 0.83 (M-M), 0.92 (N-M) | **This is the reproduction target.** `dtype=float32` (fidelity-matched, no OOM fallback triggered), `trust_remote_code=false` (**deviation** from the original authors' script — see `KNOWN_DISCREPANCIES.md` #8, uses transformers' native Phi-3 implementation instead of Microsoft's custom remote code). Ran on an assigned Tesla P100 (compute cap 6.0); `kernel_runner.py` reinstalled `torch==2.7.1+cu118` for sm_60 compatibility (**environment deviation**, `KNOWN_DISCREPANCIES.md` #9). Git commit `a76f7fd`. Qualitative pattern matches the paper: N-N/M-M stay high and roughly flat, N-M diverges starting mid-network, gap onset (layer 15) close to reference (layer 16) and within the paper's Section 3.4-refined range [11,15]. Results: `results/Phi-3-mini-4k-instruct_r500_20260820T001149Z/`, comparison report at `results/Phi-3-mini-4k-instruct_r500_20260820T001149Z/comparison/comparison_report.md`. Given the two logged deviations above, this is a reproduction under a modified (not bitwise-identical) setup, not an exact match to the authors' float32 + custom-remote-code configuration. |
 | — | *(fill in: second full run, different machine/seed check)* | same config | Phi-3-mini-4k-instruct | 500 | | vs. first full run | Checks run-to-run stability given library/hardware non-determinism (see README "Comparing runs"). |
 
+## Safety-layer localization / over-rejection (Section 3.4)
+
+Model: gemma-2b-it (focus model, see project discussion). `data/over_rejection.csv`, all 731 rows, `max_new_tokens=16` (matches `scaling.py`'s `get_output` default). Kaggle run pulled 2026-08-23 (`kaggle_pull_localization_20260823T132457Z`), rescored locally against two classifier revisions -- responses themselves are unchanged between the two scoring passes, only `refusal_classifier.py` changed. See `KNOWN_DISCREPANCIES.md` #11 for why there are two classifier columns.
+
+| Range | α (cheng_num) | n | R_o — old classifier (Zou et al. 2023 substring-anywhere) | R_o — new classifier (paper-described prefix match, broadened templates) | Δ from baseline (new classifier) |
+|---|---|---|---|---|---|
+| baseline (no scaling) | 1.0 | 731 | 135 | 173 | — |
+| target [8,11) — paper's Table 1 range for gemma-2b-it | 1.1 | 731 | 81 | 170 | −1.7% |
+| target [8,11) | 1.15 | 731 | 48 | 144 | −16.8% |
+| target [8,11) | 1.2 | 731 | 6 | 117 | −32.4% |
+| control [14,17) — arbitrary non-safety range | 1.1 | 731 | 88 | 95 | −45.1% |
+| control [14,17) | 1.15 | 731 | 59 | 64 | −63.0% |
+| control [14,17) | 1.2 | 731 | 34 | 35 | −79.8% |
+
+**Reading this**: the paper's claim (Section 3.4.2) predicts the *target* safety-layer range should show the sharpest over-rejection fluctuation under scaling, more than an arbitrary control range. Under the old (narrow, then Zou-derived) classifiers the target range did swing somewhat more than control at α=1.2 (96% vs 75% relative drop) -- weak support for the paper. Under the new classifier (closer to the paper's own described prefix-match design, broadened templates to fix the undercount), **the relationship reverses**: the control range's R_o drops far more sharply (up to −80%) than the target range's (up to −32%) at the same α. This is a striking, reportable result on its own: which classifier you use changes whether this reproduction appears to support or contradict the paper's core Section 3.4 claim. Not yet resolved which classifier is closer to what the authors actually used -- pending their email reply. Treat this row as a live, unresolved finding, not a settled negative result.
+
 ## How to fill in a row
 
 1. Run: `python -m safety_layers_repro.run_cos_sim --config configs/<name>.yaml`
