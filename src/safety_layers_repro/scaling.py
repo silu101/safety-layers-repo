@@ -116,6 +116,13 @@ def build_scaled_model(model, cfg: LocalizationConfig, tokenizer=None):
     import torch
 
     attrs = _PHI3_STYLE_ATTRS if cfg.weight_style == "phi3" else _LLAMA_STYLE_ATTRS
+    if cfg.exclude_o_proj:
+        # Matches the ACTUAL paper-submission code's bug (see
+        # docs/KNOWN_DISCREPANCIES.md #17): the OpenReview version's
+        # o_proj weight-copy targets base_model instead of new_model, so
+        # o_proj is never actually scaled in the model that gets used for
+        # generation. Skip it here to reproduce that same real behavior.
+        attrs = [(p, n) for p, n in attrs if n != "o_proj"]
     with torch.no_grad():
         for i in range(cfg.start_num, cfg.end_num):
             layer = model.model.layers[i]

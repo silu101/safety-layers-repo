@@ -32,6 +32,14 @@ class LocalizationConfig:
     # "phi3": fused self_attn.qkv_proj + mlp.gate_up_proj (scaling_phi3()) --
     #   only Phi-3 needs this, see docs/KNOWN_DISCREPANCIES.md #4.
     weight_style: str = "llama"
+    # If True, skip self_attn.o_proj (or qkv/o for phi3's o_proj) when
+    # scaling -- matches the ACTUAL paper-submission code (OpenReview
+    # supplementary archive), which has a bug where the o_proj weight
+    # update writes into base_model instead of new_model and so never
+    # actually scales the returned model's o_proj. The current GitHub
+    # repo has since fixed this. Default False matches GitHub's (fixed,
+    # not paper-producing) behavior. See docs/KNOWN_DISCREPANCIES.md #17.
+    exclude_o_proj: bool = False
 
     # --- generation (matches scaling.py's get_output defaults exactly) ---
     temperature: float = 0.0

@@ -1,0 +1,28 @@
+# Control range [14,17) with exclude_o_proj: true -- paired with
+# gemma_localization_openreview.yaml so the target-vs-control comparison
+# uses the same (paper-submission-matching) scaling behavior on both
+# sides. See docs/KNOWN_DISCREPANCIES.md #17.
+
+over_rejection_path: data/over_rejection.csv
+max_prompts: null
+
+model_path: google/gemma-2b-it
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: float32
+weight_style: llama
+exclude_o_proj: true
+
+temperature: 0.0
+top_p: 0.2
+top_k: 40
+max_new_tokens: 16
+pad_token_id: 0
+
+start_num: 14
+end_num: 17
+cheng_num: 1.1
+
+save_dir: results/
+run_name: null
