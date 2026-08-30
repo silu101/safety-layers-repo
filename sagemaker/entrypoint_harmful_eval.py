@@ -32,11 +32,28 @@ MODEL_SOURCES = [
 ]
 
 CONFIGS = [
-    "eval_gemma_full_normal.yaml",
-    "eval_gemma_full_implicit.yaml",
     "eval_gemma_sppft_normal.yaml",
-    "eval_gemma_sppft_implicit.yaml",
+    # Smoke-testing one config with a small prompt subset first (see
+    # SMOKETEST_MAX_PROMPTS below) -- this pipeline has several new,
+    # previously-untested mechanics (multi-tarball S3 extraction,
+    # HarmBench classifier, Anthropic API calls together). Re-enable the
+    # rest once this validates end-to-end.
+    # "eval_gemma_full_normal.yaml",
+    # "eval_gemma_full_implicit.yaml",
+    # "eval_gemma_sppft_implicit.yaml",
 ]
+SMOKETEST_MAX_PROMPTS = 5
+
+# Maps each config file to the output_models/* subdir name it needs --
+# used to filter MODEL_SOURCES down to only what CONFIGS actually
+# requires, so a partial CONFIGS list (e.g. during smoke-testing) doesn't
+# waste time/bandwidth downloading models nothing will use.
+CONFIG_TO_MODEL_DIR = {
+    "eval_gemma_full_normal.yaml": "gemma_full_normal",
+    "eval_gemma_full_implicit.yaml": "gemma_full_implicit",
+    "eval_gemma_sppft_normal.yaml": "gemma_sppft_normal",
+    "eval_gemma_sppft_implicit.yaml": "gemma_sppft_implicit",
+}
 
 
 def sh(cmd, **kw):
@@ -54,15 +71,19 @@ def hf_login():
     print("[entrypoint] Hugging Face login OK.")
 
 
-def fetch_models():
+def fetch_models(needed_subdirs: set[str]):
     """Download each source tarball once (dedup by URL, since the SPPFT
     pair share one tarball) and extract only the needed output_models/*
-    subdirectory into REPO_DIR/output_models/."""
+    subdirectory into REPO_DIR/output_models/. Only fetches subdirs in
+    `needed_subdirs`, so a partial CONFIGS list doesn't waste time/
+    bandwidth on models nothing will use."""
     dest_root = REPO_DIR / "output_models"
     dest_root.mkdir(parents=True, exist_ok=True)
 
     seen_tarballs = {}
     for s3_uri, subdir in MODEL_SOURCES:
+        if subdir not in needed_subdirs:
+            continue
         if s3_uri not in seen_tarballs:
             local_tar = Path(f"/tmp/{Path(s3_uri).parent.parent.name}.tar.gz")
             print(f"[entrypoint] Downloading {s3_uri} -> {local_tar} (within AWS, should be fast)")
@@ -99,7 +120,8 @@ def main():
         "sentencepiece>=0.1.99", "anthropic>=0.40"])
     hf_login()
 
-    fetch_models()
+    needed_subdirs = {CONFIG_TO_MODEL_DIR[c] for c in CONFIGS}
+    fetch_models(needed_subdirs)
 
     sys.path.insert(0, str(REPO_DIR / "src"))
     from safety_layers_repro import run_harmful_eval
@@ -109,7 +131,10 @@ def main():
         print(f"[entrypoint] Running {config_file}")
         print("=" * 70)
         try:
-            out_path = run_harmful_eval.main(["--config", f"configs/{config_file}"])
+            out_path = run_harmful_eval.main([
+                "--config", f"configs/{config_file}",
+                "--set", f"max_prompts={SMOKETEST_MAX_PROMPTS}",
+            ])
             print(f"[entrypoint] {config_file} -> {out_path}")
         except Exception as e:
             print(f"[entrypoint] WARNING: {config_file} failed: {e!r} -- continuing to the next config.")
