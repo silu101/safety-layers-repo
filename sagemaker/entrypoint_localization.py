@@ -22,9 +22,14 @@ REPO_URL = "https://github.com/silu101/safety-layers-repo"
 REPO_DIR = Path("/opt/ml/code/safety-layers-repro")
 SM_MODEL_DIR = Path(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"))
 
+# alpha=1.1 already run (see docs/KNOWN_DISCREPANCIES.md #17) -- this
+# sweep covers the remaining points to complete the comparison against
+# the earlier o_proj-included sweep (which covered 1.1/1.15/1.2).
+CHENG_NUM_SWEEP = [1.15, 1.2]
 CONFIGS = [
-    "gemma_localization_openreview.yaml",
-    "gemma_localization_control_openreview.yaml",
+    (config_file, cheng)
+    for config_file in ["gemma_localization_openreview.yaml", "gemma_localization_control_openreview.yaml"]
+    for cheng in CHENG_NUM_SWEEP
 ]
 
 
@@ -79,12 +84,14 @@ def main():
 
     from safety_layers_repro import run_localization
 
-    for config_file in CONFIGS:
+    for config_file, cheng in CONFIGS:
         print("=" * 70)
-        print(f"[entrypoint] Running {config_file}")
+        print(f"[entrypoint] Running {config_file} (cheng_num={cheng})")
         print("=" * 70)
-        out_path = run_localization.main(["--config", f"configs/{config_file}"])
-        print(f"[entrypoint] {config_file} -> {out_path}")
+        out_path = run_localization.main(
+            ["--config", f"configs/{config_file}", "--set", f"cheng_num={cheng}"]
+        )
+        print(f"[entrypoint] {config_file} (cheng_num={cheng}) -> {out_path}")
 
     # Copy every results/<run>/ dir this job produced into SM_MODEL_DIR so
     # SageMaker uploads them to S3 as the job's model artifact.
