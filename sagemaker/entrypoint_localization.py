@@ -65,8 +65,14 @@ def main():
     # the launcher side already selects the correct one). Install the base
     # package (numpy/pandas/pyyaml) plus only the non-torch model deps.
     sh([sys.executable, "-m", "pip", "install", "-e", "."])
+    # Pinned, not >= -- an unbounded install resolved to transformers
+    # 5.16.1 / huggingface-hub 1.29.0, which broke torch detection inside
+    # this DLC (AutoModelForCausalLM claimed torch was "not found" even
+    # though it's present and working -- see the diagnostic step above).
+    # transformers==4.44.2 is already validated elsewhere in this project
+    # (see docs/KNOWN_DISCREPANCIES.md #8's Phi-3 remote-code pin).
     sh([sys.executable, "-m", "pip", "install",
-        "transformers>=4.40", "accelerate>=0.29", "tqdm>=4.65", "datasets>=2.19"])
+        "transformers==4.44.2", "accelerate==0.31.0", "tqdm>=4.65", "datasets==2.20.0"])
     sys.path.insert(0, str(REPO_DIR / "src"))
     hf_login()
 
