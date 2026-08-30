@@ -72,7 +72,8 @@ def main():
     # transformers==4.44.2 is already validated elsewhere in this project
     # (see docs/KNOWN_DISCREPANCIES.md #8's Phi-3 remote-code pin).
     sh([sys.executable, "-m", "pip", "install",
-        "transformers==4.44.2", "accelerate==0.31.0", "tqdm>=4.65", "datasets==2.20.0"])
+        "transformers==4.44.2", "accelerate==0.31.0", "tqdm>=4.65", "datasets==2.20.0",
+        "sentencepiece>=0.1.99"])  # GemmaTokenizer needs this
     sys.path.insert(0, str(REPO_DIR / "src"))
     hf_login()
 
