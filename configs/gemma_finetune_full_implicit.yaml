@@ -1,0 +1,32 @@
+# Section 4: Full-parameter fine-tuning on gemma-2b-it with Implicit (DI) data.
+# data_path points to Backdoor_dataset.json, which is used AS DI here --
+# see docs/KNOWN_DISCREPANCIES.md #5: its content matches the paper's
+# Implicit definition (every output prefixed "Sure, the answer is:", no
+# trigger phrase distinguishing subsets), despite the filename. True
+# Backdoor (DB) data does not exist in the source repo and is out of scope.
+
+method: full
+base_model: google/gemma-2b-it
+data_path: data/finetune/Backdoor_dataset.json   # used as DI -- see KNOWN_DISCREPANCIES.md #5
+trust_remote_code: false
+
+batch_size: 128
+micro_batch_size: 4
+num_epochs: 3
+learning_rate: 1.0e-4
+cutoff_len: 256
+val_set_size: 100
+warmup_steps: 100
+
+train_on_inputs: true
+add_eos_token: false
+group_by_length: false
+prompt_template_name: alpaca
+
+if_freeze: false
+begin_num: 5
+end_num: 12
+
+output_dir: output_models/gemma_full_implicit
+save_dir: results/
+run_name: null

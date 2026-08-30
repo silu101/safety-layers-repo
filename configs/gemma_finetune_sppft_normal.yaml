@@ -1,0 +1,33 @@
+# Section 4: SPPFT on gemma-2b-it with Normal (DN) data.
+# begin_num=5, end_num=12 -- NOT 6,12 -- because SPPFT.py's freeze
+# condition is the STRICT inequality `begin_num < layer < end_num`
+# (excludes both ends). To freeze the paper's confirmed gemma safety
+# layers [6,11] inclusive, this is the correct call. See
+# docs/KNOWN_DISCREPANCIES.md #13 (the [6,11] range itself) and #15 (the
+# strict-inequality quirk).
+
+method: sppft
+base_model: google/gemma-2b-it
+data_path: data/finetune/Normal_dataset.json
+trust_remote_code: false
+
+batch_size: 128
+micro_batch_size: 4
+num_epochs: 3
+learning_rate: 1.0e-4
+cutoff_len: 256
+val_set_size: 100
+warmup_steps: 100
+
+train_on_inputs: true
+add_eos_token: false
+group_by_length: false
+prompt_template_name: alpaca
+
+if_freeze: true
+begin_num: 5
+end_num: 12
+
+output_dir: output_models/gemma_sppft_normal
+save_dir: results/
+run_name: null

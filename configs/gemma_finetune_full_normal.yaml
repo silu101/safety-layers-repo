@@ -1,0 +1,30 @@
+# Section 4: Full-parameter fine-tuning on gemma-2b-it with Normal (DN) data.
+# Hyperparameters from Appendix Table 6 for gemma-2b-it -- see
+# docs/KNOWN_DISCREPANCIES.md #6 (learning_rate overrides the script's own
+# default), #16 (batch_size ambiguity, kept at the script's own default).
+
+method: full
+base_model: google/gemma-2b-it
+data_path: data/finetune/Normal_dataset.json
+trust_remote_code: false
+
+batch_size: 128
+micro_batch_size: 4
+num_epochs: 3
+learning_rate: 1.0e-4
+cutoff_len: 256
+val_set_size: 100
+warmup_steps: 100
+
+train_on_inputs: true
+add_eos_token: false
+group_by_length: false
+prompt_template_name: alpaca
+
+if_freeze: false   # not used by train_full(), harmless default
+begin_num: 5
+end_num: 12
+
+output_dir: output_models/gemma_full_normal
+save_dir: results/
+run_name: null

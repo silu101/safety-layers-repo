@@ -1,0 +1,26 @@
+# Section 4 evaluation: harmful-rate (R_h) + harmful-score (S_h) for the
+# Full-FT-on-Normal-data model. model_path points to wherever the
+# SageMaker eval entrypoint extracts this checkpoint to locally (see
+# sagemaker/entrypoint_harmful_eval.py) -- NOT a path that exists in this
+# repo itself.
+
+model_path: output_models/gemma_full_normal
+tokenizer_path: google/gemma-2b-it   # fine-tuned checkpoint dirs don't always re-save tokenizer files
+trust_remote_code: false
+device_map: auto
+dtype: float32
+
+advbench_path: data/advbench_malicious.csv
+max_prompts: null   # all 520, per D_m
+
+prompt_template: alpaca
+max_new_tokens: 128
+pad_token_id: 0
+
+use_zou_keyword_classifier: true
+use_harmbench_classifier: true
+judge_model: claude-haiku-4-5-20251001
+judge_max_samples: null
+
+save_dir: results/
+run_name: null

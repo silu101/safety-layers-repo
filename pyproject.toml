@@ -23,6 +23,7 @@ model = [
     "transformers>=4.40",
     "accelerate>=0.29",
     "tqdm>=4.65",
+    "datasets>=2.19",
 ]
 plot = [
     "matplotlib>=3.7",
