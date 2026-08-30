@@ -33,17 +33,15 @@ MODEL_SOURCES = [
 ]
 
 CONFIGS = [
+    "eval_gemma_full_normal.yaml",
+    "eval_gemma_full_implicit.yaml",
     "eval_gemma_sppft_normal.yaml",
-    # Smoke-testing one config with a small prompt subset first (see
-    # SMOKETEST_MAX_PROMPTS below) -- this pipeline has several new,
-    # previously-untested mechanics (multi-tarball S3 extraction,
-    # HarmBench classifier, Anthropic API calls together). Re-enable the
-    # rest once this validates end-to-end.
-    # "eval_gemma_full_normal.yaml",
-    # "eval_gemma_full_implicit.yaml",
-    # "eval_gemma_sppft_implicit.yaml",
+    "eval_gemma_sppft_implicit.yaml",
 ]
-SMOKETEST_MAX_PROMPTS = 5
+# Smoke test (5 prompts, sppft_normal only) validated the full pipeline
+# end-to-end 2026-08-30 -- now running all 4 models on the full 520-prompt
+# AdvBench set (D_m), matching the paper's actual evaluation size.
+MAX_PROMPTS = None
 
 # Maps each config file to the output_models/* subdir name it needs --
 # used to filter MODEL_SOURCES down to only what CONFIGS actually
@@ -139,10 +137,15 @@ def main():
         print(f"[entrypoint] Running {config_file}")
         print("=" * 70)
         try:
-            out_path = run_harmful_eval.main([
-                "--config", f"configs/{config_file}",
-                "--set", f"max_prompts={SMOKETEST_MAX_PROMPTS}",
-            ])
+            argv = ["--config", f"configs/{config_file}"]
+            if MAX_PROMPTS is not None:
+                # NOTE: don't pass --set max_prompts=None here -- yaml.safe_load
+                # parses that as the STRING "None", not Python None, which
+                # would break `prompts[:cfg.max_prompts]`'s slicing. Omitting
+                # the override entirely lets each config's own
+                # `max_prompts: null` (real YAML null) apply instead.
+                argv += ["--set", f"max_prompts={MAX_PROMPTS}"]
+            out_path = run_harmful_eval.main(argv)
             print(f"[entrypoint] {config_file} -> {out_path}")
         except Exception as e:
             print(f"[entrypoint] WARNING: {config_file} failed: {e!r} -- continuing to the next config.")
