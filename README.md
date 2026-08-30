@@ -63,6 +63,26 @@ pytest tests/ -v
 pip install -e ".[model,plot]"
 ```
 
+## Quick start: `reproduce.py` (recommended for a fresh machine / large compute)
+
+If you're running this on a machine with real GPU headroom (e.g. A100s,
+no memory-squeeze workarounds needed) and don't want to touch YAML files
+at all, `reproduce.py` at the repo root gives direct CLI flags instead --
+it wraps the exact same tested code as everything below, just without
+requiring a config file for a normal run:
+
+```bash
+python reproduce.py existence --model_path meta-llama/Llama-2-7b-chat-hf --r 500
+python reproduce.py localization --model_path google/gemma-2b-it --ranges "6-12,6-13,6-14" --cheng_num "1.1,1.15,1.2"
+python reproduce.py finetune_eval --model_path ./my-finetuned-checkpoint --max_prompts 520
+```
+
+Every run still saves full provenance (exact resolved config, git commit,
+timestamp) to `results/<run_name>/run_metadata.json`, same as the
+YAML-based path -- you just never have to hand-write one. Pass
+`--config some.yaml` on any subcommand if you do want to save/reuse a
+specific setup. `ood` exists as a stubbed subcommand, not yet implemented.
+
 ## Running the real experiment (GPU machine)
 
 ```bash

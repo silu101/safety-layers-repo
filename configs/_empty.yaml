@@ -1,0 +1,4 @@
+# Intentionally empty -- used as the base config for reproduce.py's CLI-only
+# invocations (every dataclass field has a default, so an empty YAML plus
+# --set overrides for whatever the user actually passed on the command
+# line is a complete, valid config).
