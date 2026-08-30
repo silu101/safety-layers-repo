@@ -28,6 +28,19 @@ Model: gemma-2b-it (focus model, see project discussion). `data/over_rejection.c
 | control [14,17) | 1.15 | 731 | 64 | −63.0% |
 | control [14,17) | 1.2 | 731 | 35 | −79.8% |
 
+**Update 2026-08-30 -- o_proj-exclusion re-run (see `KNOWN_DISCREPANCIES.md` #17):** the table above scales `o_proj` along with q/k/v and the MLP projections. Diffing the paper's actual OpenReview submission code against the current GitHub repo found that the submission-time `scaling()`/`scaling_phi3()` never actually scale `o_proj` (a variable-naming bug: it writes into `base_model` instead of `new_model`). Re-ran the full sweep on AWS SageMaker (`ml.g6e.xlarge`, ~$0.95 total across both jobs) with `o_proj` excluded, matching that real behavior:
+
+| Range | α | n | R_o (o_proj excluded) | Δ from baseline | R_o (o_proj included, above) | Δ from baseline |
+|---|---|---|---|---|---|---|
+| target [6,12) | 1.1 | 731 | 230 | +33.0% | 242 | +39.9% |
+| target [6,12) | 1.15 | 731 | 247 | +42.8% | 286 | +65.3% |
+| target [6,12) | 1.2 | 731 | 239 | +38.2% | 306 | +76.9% |
+| control [14,17) | 1.1 | 731 | 94 | −45.7% | 95 | −45.1% |
+| control [14,17) | 1.15 | 731 | 58 | −66.5% | 64 | −63.0% |
+| control [14,17) | 1.2 | 731 | 31 | −82.1% | 35 | −79.8% |
+
+**Reading this**: the qualitative finding survives -- target rises, control falls, they clearly diverge, regardless of whether `o_proj` is included. But excluding it (the actual paper-producing behavior) changes the shape: the target's response is no longer cleanly monotonic with α (peaks at 1.15, dips slightly at 1.2) and the magnitudes are consistently smaller (+33% to +43% vs +40% to +77%). The control range's behavior is nearly identical either way. So the clean "more scaling = more effect" monotonic climb seen with `o_proj` included was partly an artifact of running the later-edited (not paper-producing) code path.
+
 **Reading this**: the paper's claim (Section 3.4.2) predicts the *target* safety-layer range should show the sharpest over-rejection fluctuation under scaling, more than an arbitrary control range. This result matches that direction clearly: over-rejection *rises* sharply and monotonically with α (+40% → +77%) for the target range, while the control range *drops* over the same sweep (−45% → −80%) -- a distinct, opposite-direction divergence between target and control. This is the first result in this reproduction that cleanly supports Section 3.4's core claim. Caveat: the classifier's specific phrase list is still our own reconstruction (see #11), so the exact magnitudes aren't verified against the authors' own numbers -- but the qualitative direction (target rises, control falls, and they diverge with α) is consistent with the paper.
 
 ## How to fill in a row
