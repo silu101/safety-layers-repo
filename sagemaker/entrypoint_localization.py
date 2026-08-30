@@ -51,7 +51,14 @@ def hf_login():
 def main():
     sh(["git", "clone", REPO_URL, str(REPO_DIR)])
     os.chdir(str(REPO_DIR))
-    sh([sys.executable, "-m", "pip", "install", "-e", ".[model,plot]"])
+    # Install WITHOUT the "model" extra -- it pins torch>=2.0, and letting
+    # pip reinstall torch from PyPI inside this DLC breaks the container's
+    # own preinstalled, GPU/CUDA-matched build (framework_version=2.3 on
+    # the launcher side already selects the correct one). Install the base
+    # package (numpy/pandas/pyyaml) plus only the non-torch model deps.
+    sh([sys.executable, "-m", "pip", "install", "-e", "."])
+    sh([sys.executable, "-m", "pip", "install",
+        "transformers>=4.40", "accelerate>=0.29", "tqdm>=4.65", "datasets>=2.19"])
     sys.path.insert(0, str(REPO_DIR / "src"))
     hf_login()
 
