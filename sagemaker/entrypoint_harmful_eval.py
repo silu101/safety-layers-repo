@@ -92,15 +92,33 @@ def fetch_models(needed_subdirs: set[str]):
 
         print(f"[entrypoint] Extracting output_models/{subdir} from {local_tar}")
         with tarfile.open(local_tar, "r:gz") as tar:
-            members = [m for m in tar.getmembers() if f"output_models/{subdir}/" in m.name]
+            prefix = f"output_models/{subdir}/"
+            # Exclude checkpoint-*/ subdirs entirely -- these are
+            # Trainer's mid/end-of-training resume checkpoints, which for
+            # a DeepSpeed run include a FULL raw sharded copy of the model
+            # AND optimizer states (global_step*/...optim_states.pt) on
+            # top of the final consolidated model already saved separately
+            # via trainer.save_model(). We only need the final model for
+            # evaluation -- including checkpoint-*/ blew through 250GB of
+            # disk (each Full FT model's checkpoint dir alone is ~2-3x the
+            # size of the actual final model).
+            members = [
+                m for m in tar.getmembers()
+                if m.name.startswith(prefix) and "/checkpoint-" not in m.name
+            ]
             if not members:
-                raise RuntimeError(f"No members matching output_models/{subdir}/ found in {local_tar}")
+                raise RuntimeError(f"No members matching {prefix} found in {local_tar}")
             tar.extractall(path="/tmp/extract", members=members)
         extracted_src = Path(f"/tmp/extract/output_models/{subdir}")
         dest = dest_root / subdir
         if dest.exists():
             shutil.rmtree(dest)
-        shutil.move(str(extracted_src), str(dest))
+        # copytree+rmtree instead of shutil.move -- move() can raise
+        # "Invalid cross-device link" (EXDEV) moving a directory between
+        # different mounted filesystems, which /tmp and REPO_DIR turned
+        # out to be in this container.
+        shutil.copytree(str(extracted_src), str(dest))
+        shutil.rmtree(str(extracted_src))
         print(f"[entrypoint] {subdir} ready at {dest}")
 
     # Free disk space -- don't need the downloaded tarballs after extraction.
