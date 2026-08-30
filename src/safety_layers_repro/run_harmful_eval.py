@@ -155,6 +155,22 @@ def main(argv: list[str] | None = None) -> Path:
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"[safety_layers_repro] Saved: {out_path}")
+
+    # Explicit cleanup -- when a caller (e.g. the SageMaker entrypoint)
+    # invokes main() repeatedly in one long-lived process across several
+    # models, leaving `model` to be freed by ordinary scope-exit/GC timing
+    # let GPU memory pressure accumulate across configs: a later config
+    # started seeing "parameters offloaded to the cpu" warnings (from
+    # device_map="auto" no longer finding enough free GPU memory) and its
+    # generation became drastically slower as a result. Freeing explicitly
+    # here ensures each config starts from a clean GPU state.
+    del model
+    import gc
+    gc.collect()
+    import torch
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return out_path
 
 

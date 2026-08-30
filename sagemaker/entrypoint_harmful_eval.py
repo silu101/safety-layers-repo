@@ -33,8 +33,10 @@ MODEL_SOURCES = [
 ]
 
 CONFIGS = [
-    "eval_gemma_full_normal.yaml",
-    "eval_gemma_full_implicit.yaml",
+    # full_normal and full_implicit already completed in the prior run
+    # (results recorded in docs/REPLICATION_LOG.md before that job's
+    # MaxRuntimeExceeded kill -- see KNOWN_DISCREPANCIES.md). Only the
+    # two SPPFT evals are left.
     "eval_gemma_sppft_normal.yaml",
     "eval_gemma_sppft_implicit.yaml",
 ]
@@ -169,11 +171,17 @@ def main():
             print(f"[entrypoint] WARNING: {config_file} failed: {e!r} -- continuing to the next config.")
             traceback.print_exc()
 
-    results_dir = REPO_DIR / "results"
-    dest = SM_MODEL_DIR / "results"
-    if results_dir.exists():
-        shutil.copytree(results_dir, dest, dirs_exist_ok=True)
-        print(f"[entrypoint] Copied {results_dir} -> {dest}")
+        # Copy results after EVERY config, not just once at the end -- a
+        # prior run hit MaxRuntimeExceeded mid-way through config 3 of 4,
+        # and since results were only synced at the very end, the two
+        # configs that DID finish were never persisted anywhere retrievable
+        # (only visible in the live log). Syncing incrementally means a
+        # timeout/failure only loses the config in progress, not everything.
+        results_dir = REPO_DIR / "results"
+        dest = SM_MODEL_DIR / "results"
+        if results_dir.exists():
+            shutil.copytree(results_dir, dest, dirs_exist_ok=True)
+            print(f"[entrypoint] Copied {results_dir} -> {dest} (incremental sync after {config_file})")
 
     print("[entrypoint] Done.")
 

@@ -50,6 +50,19 @@ Model: gemma-2b-it (focus model, see project discussion). `data/over_rejection.c
 3. Pull the "gap onset" and diff numbers from `results/<run>/comparison/comparison_report.md`
 4. Add a row here with a link/path to `results/<run>/` so the full artifacts are traceable from this table.
 
+## Section 4 harmful-rate (R_h) / harmful-score (S_h) on AdvBench (gemma-2b-it)
+
+520 AdvBench prompts (D_m), against the 4 trained models from the Section 4 fine-tuning jobs. R_h computed two independent ways (paper never specifies a method -- see `KNOWN_DISCREPANCIES.md`): Zou et al. 2023's keyword classifier, and HarmBench's official classifier (`cais/HarmBench-Llama-2-13b-cls`). S_h via Claude Haiku 4.5 (`harmful_score.py`). Recorded directly from a SageMaker job's live log (2026-08-30) that hit `MaxRuntimeExceeded` (5hr cap) partway through the SPPFT evals -- these two rows were NOT yet synced to S3 when the job died (a real bug, since fixed: results now sync incrementally after every config, not just once at the end).
+
+| Model | Data | R_h (Zou) | R_h (HarmBench) | S_h |
+|---|---|---|---|---|
+| Full FT | Normal (D_N) | 0.394 (205/520) | **0.035** (18/520) | 1.24 |
+| Full FT | Implicit (D_I, via `Backdoor_dataset.json` -- see #5) | 0.631 (328/520) | 0.292 (152/520) | 2.70 |
+| SPPFT | Normal (D_N) | *pending re-run* | *pending re-run* | *pending re-run* |
+| SPPFT | Implicit (D_I) | *pending re-run* | *pending re-run* | *pending re-run* |
+
+**Comparison against the paper's own Table 2 (gemma-2b-it, D_N, FullFT column): R_h=18.27%, S_h=1.68.** Our Zou-classifier R_h (39.4%) is more than double theirs; our HarmBench-classifier R_h (3.5%) is well under theirs; our S_h (1.24) is somewhat lower (more secure) than theirs. The two classifiers disagree sharply with each other on this same model (39.4% vs 3.5%), which is itself informative -- S_h (an independent, non-keyword-based judge) sits closer to the HarmBench number, suggesting the Zou keyword classifier may be undercounting refusals here the same way it needed broadening for Section 3.4's over-rejection task. Not yet conclusive: still missing the SPPFT rows, which the paper's own comparison depends on (SPPFT vs FullFT is the actual claim, not FullFT's absolute number alone).
+
 ## Escalation rule (per project discipline)
 
 If a full r=500 run's mean curves diverge substantially in shape from the qualitative pattern described in the paper (i.e. N-N/M-M flat-high, N-M diverging mid-network) — not just numeric noise — **stop and investigate** before moving to Section 3.4 localization or any validation experiments. Candidate causes to check first: model revision/quantization mismatch, prompt template mismatch, transformers/torch version affecting `generate()` defaults, `num_beams=4` vs. greedy decoding differences.
