@@ -49,9 +49,10 @@ estimator = PyTorch(
     volume_size=250,
     sagemaker_session=session,
     base_job_name="safety-layers-harmful-eval",
-    max_run=4 * 60 * 60,  # 4 hours ceiling -- 4 models x 520 AdvBench
+    max_run=5 * 60 * 60,  # 5 hours ceiling -- 4 models x 520 AdvBench
                           # prompts x (generation + 2 local classifiers +
-                          # Haiku judge calls), generous cost/safety guard.
+                          # sequential Haiku judge calls, ~2080 total).
+                          # Rough estimate is 2.5-3hrs; padded for margin.
     environment={
         "HF_TOKEN": hf_token,
         "ANTHROPIC_API_KEY": anthropic_key,
