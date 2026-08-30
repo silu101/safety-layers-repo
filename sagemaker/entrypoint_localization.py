@@ -51,6 +51,14 @@ def hf_login():
 def main():
     sh(["git", "clone", REPO_URL, str(REPO_DIR)])
     os.chdir(str(REPO_DIR))
+
+    print("=" * 70)
+    print("[entrypoint] DIAGNOSTIC: checking for preinstalled torch BEFORE any pip install")
+    print(f"[entrypoint] sys.executable = {sys.executable}")
+    subprocess.run([sys.executable, "-c", "import torch; print('torch OK:', torch.__version__, torch.cuda.is_available())"])
+    subprocess.run([sys.executable, "-m", "pip", "list"])
+    print("=" * 70)
+
     # Install WITHOUT the "model" extra -- it pins torch>=2.0, and letting
     # pip reinstall torch from PyPI inside this DLC breaks the container's
     # own preinstalled, GPU/CUDA-matched build (framework_version=2.3 on
