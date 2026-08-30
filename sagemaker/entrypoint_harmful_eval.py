@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import traceback
 from pathlib import Path
 
 REPO_URL = "https://github.com/silu101/safety-layers-repo"
@@ -117,7 +118,14 @@ def main():
     sh([sys.executable, "-m", "pip", "install", "-e", "."])
     sh([sys.executable, "-m", "pip", "install",
         "transformers==4.44.2", "accelerate==0.31.0",
-        "sentencepiece>=0.1.99", "anthropic>=0.40"])
+        "sentencepiece>=0.1.99",
+        # Pinned, not >= -- unbounded resolved to anthropic 1.2.0, which
+        # then failed with a generic APIConnectionError on the actual
+        # judge call (no further detail printed -- see the traceback.
+        # print_exc() below, added for exactly this kind of failure).
+        # 0.40.0 matches this project's harmful_score.py interface, which
+        # was built/tested against the 0.x SDK.
+        "anthropic==0.40.0"])
     hf_login()
 
     needed_subdirs = {CONFIG_TO_MODEL_DIR[c] for c in CONFIGS}
@@ -138,6 +146,7 @@ def main():
             print(f"[entrypoint] {config_file} -> {out_path}")
         except Exception as e:
             print(f"[entrypoint] WARNING: {config_file} failed: {e!r} -- continuing to the next config.")
+            traceback.print_exc()
 
     results_dir = REPO_DIR / "results"
     dest = SM_MODEL_DIR / "results"
