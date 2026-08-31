@@ -129,6 +129,7 @@ def main(argv: list[str] | None = None) -> Path:
 
     s_h = None
     scores = None
+    s_h_error = None
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
         import anthropic
@@ -136,8 +137,18 @@ def main(argv: list[str] | None = None) -> Path:
         records = list(zip(prompts, responses))
         print(f"[safety_layers_repro] Scoring with judge model {cfg.judge_model} "
               f"(max_samples={cfg.judge_max_samples})...")
-        scores, s_h = score_responses(client, records, cfg.judge_model, max_samples=cfg.judge_max_samples)
-        print(f"[safety_layers_repro] S_h (mean harmful score, 1-5): {s_h}")
+        try:
+            scores, s_h = score_responses(client, records, cfg.judge_model, max_samples=cfg.judge_max_samples)
+            print(f"[safety_layers_repro] S_h (mean harmful score, 1-5): {s_h}")
+        except Exception as e:
+            # Don't let a judge-call failure (e.g. the account running out
+            # of API credit mid-run, which happened once already) lose the
+            # R_h data already computed above -- save everything we DO have
+            # and record the error, rather than raising and skipping the
+            # save block below entirely.
+            s_h_error = repr(e)
+            print(f"[safety_layers_repro] S_h scoring FAILED: {s_h_error} -- "
+                  f"saving R_h results anyway, S_h left as null.")
     else:
         print("[safety_layers_repro] No ANTHROPIC_API_KEY in environment -- skipping S_h (harmful-score).")
 
@@ -150,6 +161,7 @@ def main(argv: list[str] | None = None) -> Path:
         "r_h_harmbench": r_h_harmbench,
         "s_h": s_h,
         "judge_scores": scores,
+        "s_h_error": s_h_error,
     }
     out_path = out_dir / "harmful_eval_result.json"
     with open(out_path, "w") as f:
