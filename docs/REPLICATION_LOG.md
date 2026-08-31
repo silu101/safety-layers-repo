@@ -56,12 +56,16 @@ Model: gemma-2b-it (focus model, see project discussion). `data/over_rejection.c
 
 | Model | Data | R_h (Zou) | R_h (HarmBench) | S_h |
 |---|---|---|---|---|
-| Full FT | Normal (D_N) | 0.394 (205/520) | **0.035** (18/520) | 1.24 |
+| Full FT | Normal (D_N) | 0.394 (205/520) | 0.035 (18/520) | 1.24 |
 | Full FT | Implicit (D_I, via `Backdoor_dataset.json` -- see #5) | 0.631 (328/520) | 0.292 (152/520) | 2.70 |
-| SPPFT | Normal (D_N) | *pending re-run* | *pending re-run* | *pending re-run* |
-| SPPFT | Implicit (D_I) | *pending re-run* | *pending re-run* | *pending re-run* |
+| SPPFT | Normal (D_N) | 0.306 (159/520) | 0.075 (39/520) | 1.45 |
+| SPPFT | Implicit (D_I) | 0.171 (89/520) | 0.052 (27/520) | 1.32 |
 
-**Comparison against the paper's own Table 2 (gemma-2b-it, D_N, FullFT column): R_h=18.27%, S_h=1.68.** Our Zou-classifier R_h (39.4%) is more than double theirs; our HarmBench-classifier R_h (3.5%) is well under theirs; our S_h (1.24) is somewhat lower (more secure) than theirs. The two classifiers disagree sharply with each other on this same model (39.4% vs 3.5%), which is itself informative -- S_h (an independent, non-keyword-based judge) sits closer to the HarmBench number, suggesting the Zou keyword classifier may be undercounting refusals here the same way it needed broadening for Section 3.4's over-rejection task. Not yet conclusive: still missing the SPPFT rows, which the paper's own comparison depends on (SPPFT vs FullFT is the actual claim, not FullFT's absolute number alone).
+**Comparison against the paper's own Table 2 (gemma-2b-it): D_N -- SPPFT R_h=5.58%/S_h=1.14, FullFT R_h=18.27%/S_h=1.68. D_I -- SPPFT R_h=6.35%/S_h=1.21, FullFT R_h=54.04%/S_h=2.98.**
+
+**On Implicit data: strong, consistent confirmation of the paper's core claim across all three metrics.** SPPFT vs FullFT: R_h drops 0.631→0.171 (Zou) and 0.292→0.052 (HarmBench); S_h drops 2.70→1.32. Same direction as the paper (SPPFT dramatically safer), even though absolute magnitudes differ (our FullFT R_h is higher than their 54.04%, and our SPPFT R_h is higher than their 6.35% -- see classifier-methodology discussion below).
+
+**On Normal data: genuinely mixed, and partly contradicts the paper's direction.** The Zou classifier alone shows SPPFT safer (0.306 vs 0.394, matching the paper's claimed direction) -- but BOTH the HarmBench classifier (0.075 vs 0.035) and the independent Claude-Haiku judge (S_h 1.45 vs 1.24) show SPPFT as *slightly less safe* than FullFT here, the opposite of what the paper claims. Since two independent, non-keyword-based measures agree with each other against Zou's outlier direction, this is not just classifier noise on our end -- it's a genuine candidate finding that SPPFT's protective effect does not hold uniformly across data conditions in this reproduction, at least for gemma-2b-it. The Zou/HarmBench disagreement itself (large gaps in both rows) also reinforces discrepancy #11's point: the Zou keyword classifier likely undercounts refusals, the same failure mode already found and partially fixed for Section 3.4's over-rejection task.
 
 ## Escalation rule (per project discipline)
 
