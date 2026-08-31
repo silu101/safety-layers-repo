@@ -120,14 +120,75 @@ def cmd_finetune_eval(args: argparse.Namespace) -> None:
     run_harmful_eval.main(argv)
 
 
+def _load_prompt_lines(path: str) -> list[str]:
+    with open(path) as f:
+        return [line.rstrip("\n") for line in f if line.strip()]
+
+
+def _write_prompt_lines(path: Path, prompts: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        for p in prompts:
+            # CSV with a single unquoted column -- matches
+            # data/over_rejection.csv / advbench_malicious.csv's own
+            # format exactly, so downstream loaders need no changes. This
+            # only breaks if a perturbed prompt itself contains a literal
+            # newline (paraphrase/templates here don't produce one).
+            f.write(p.replace("\n", " ") + "\n")
+
+
 def cmd_ood(args: argparse.Namespace) -> None:
-    raise SystemExit(
-        "'ood' is not yet implemented. This is a stub subcommand so the CLI "
-        "shape (paraphrase/injection/roleplay perturbation, then re-running "
-        "existence/localization/finetune_eval against the perturbed prompt "
-        "set) is ready to fill in next -- see slide 149's stated robustness-"
-        "test recipe in the Safe Neuron project context for the intended design."
-    )
+    """OOD robustness test, per Safe Neuron's own stated recipe (slide 149):
+    paraphrase/inject/roleplay the prompt set, then re-run the SAME
+    identification (localization) or evaluation (finetune_eval) pipeline
+    against the perturbed set. Not a new metric -- reuses existing, tested
+    code, just pointed at a perturbed data file instead of the original."""
+    import os
+
+    from safety_layers_repro import ood_perturb
+
+    default_source = {
+        "localization": "data/over_rejection.csv",
+        "finetune_eval": "data/advbench_malicious.csv",
+    }[args.target]
+    source_path = args.source_path or default_source
+
+    ood_dir = REPO_ROOT / "data" / "ood"
+    perturbed_path = ood_dir / f"{args.perturbation}_{Path(source_path).stem}.csv"
+
+    if perturbed_path.exists() and not args.force_regenerate:
+        print(f"[ood] Using cached perturbed prompts: {perturbed_path}")
+    else:
+        prompts = _load_prompt_lines(source_path)
+        print(f"[ood] Generating {args.perturbation} variants of {len(prompts)} prompts from {source_path}...")
+        client = None
+        if args.perturbation == "paraphrase":
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise SystemExit("paraphrase needs ANTHROPIC_API_KEY set in the environment.")
+            client = anthropic.Anthropic(api_key=api_key)
+        perturbed = ood_perturb.perturb(
+            args.perturbation, prompts, client=client, model=args.judge_model, max_samples=args.max_prompts,
+        )
+        _write_prompt_lines(perturbed_path, perturbed)
+        print(f"[ood] Wrote {len(perturbed)} perturbed prompts -> {perturbed_path}")
+
+    print(f"[ood] Re-running '{args.target}' against the perturbed set...")
+    if args.target == "localization":
+        cmd_localization(argparse.Namespace(
+            model_path=args.model_path, dtype=args.dtype, config=args.config,
+            ranges=args.ranges, start_num=0, end_num=0, cheng_num=args.cheng_num,
+            weight_style=args.weight_style, exclude_o_proj=args.exclude_o_proj,
+            over_rejection_path=str(perturbed_path), max_prompts=None,
+        ))
+    else:
+        cmd_finetune_eval(argparse.Namespace(
+            model_path=args.model_path, dtype=args.dtype, config=args.config,
+            tokenizer_path=args.tokenizer_path, advbench_path=str(perturbed_path),
+            max_prompts=None, use_zou=args.use_zou, use_harmbench=args.use_harmbench,
+            judge_model=args.judge_model, judge_max_samples=args.judge_max_samples,
+        ))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -172,7 +233,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_ft.add_argument("--judge_max_samples", type=int, default=None)
     p_ft.set_defaults(func=cmd_finetune_eval)
 
-    p_ood = sub.add_parser("ood", help="[NOT YET IMPLEMENTED] Out-of-distribution robustness tests.")
+    p_ood = sub.add_parser(
+        "ood",
+        help="Out-of-distribution robustness test: paraphrase/inject/roleplay the prompt set, "
+             "then re-run localization or finetune_eval against it.",
+    )
+    add_common(p_ood)
+    p_ood.add_argument("--target", required=True, choices=["localization", "finetune_eval"],
+                        help="Which existing pipeline to re-run against the perturbed prompts.")
+    p_ood.add_argument("--perturbation", required=True, choices=["paraphrase", "inject", "roleplay"])
+    p_ood.add_argument("--source_path", default=None,
+                        help="Defaults to data/over_rejection.csv (localization) or "
+                             "data/advbench_malicious.csv (finetune_eval).")
+    p_ood.add_argument("--max_prompts", type=int, default=None, help="Limit how many prompts get perturbed.")
+    p_ood.add_argument("--force_regenerate", action="store_true",
+                        help="Regenerate perturbed prompts even if a cached file already exists.")
+    p_ood.add_argument("--judge_model", default="claude-haiku-4-5-20251001",
+                        help="Used both for paraphrase generation and (if --target finetune_eval) S_h judging.")
+    # localization-specific pass-through:
+    p_ood.add_argument("--ranges", default=None)
+    p_ood.add_argument("--cheng_num", default=None)
+    p_ood.add_argument("--weight_style", default=None, choices=["llama", "phi3"])
+    p_ood.add_argument("--exclude_o_proj", action="store_true", default=None)
+    # finetune_eval-specific pass-through:
+    p_ood.add_argument("--tokenizer_path", default=None)
+    p_ood.add_argument("--use_zou", action="store_true", default=None)
+    p_ood.add_argument("--use_harmbench", action="store_true", default=None)
+    p_ood.add_argument("--judge_max_samples", type=int, default=None)
     p_ood.set_defaults(func=cmd_ood)
 
     return p

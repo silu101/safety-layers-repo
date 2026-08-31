@@ -81,7 +81,18 @@ Every run still saves full provenance (exact resolved config, git commit,
 timestamp) to `results/<run_name>/run_metadata.json`, same as the
 YAML-based path -- you just never have to hand-write one. Pass
 `--config some.yaml` on any subcommand if you do want to save/reuse a
-specific setup. `ood` exists as a stubbed subcommand, not yet implemented.
+specific setup.
+
+`ood` runs an out-of-distribution robustness test, per Safe Neuron's own
+stated recipe: paraphrase/inject/roleplay-perturb the prompt set, then
+re-run `localization` or `finetune_eval` against the perturbed prompts
+instead of the originals (`paraphrase` needs `ANTHROPIC_API_KEY` set;
+`inject`/`roleplay` are deterministic templates, no API needed):
+
+```bash
+python reproduce.py ood --target localization --perturbation roleplay --model_path google/gemma-2b-it --ranges "6-12" --cheng_num 1.1
+python reproduce.py ood --target finetune_eval --perturbation paraphrase --model_path ./my-finetuned-checkpoint
+```
 
 ## Running the real experiment (GPU machine)
 
