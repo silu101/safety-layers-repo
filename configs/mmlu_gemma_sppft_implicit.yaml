@@ -1,0 +1,17 @@
+model_path: output_models/gemma_sppft_implicit
+tokenizer_path: google/gemma-2b-it
+trust_remote_code: false
+device_map: auto
+dtype: float32
+
+mmlu_subset: all
+mmlu_split: test
+max_questions: 500
+seed: 42
+
+prompt_template: alpaca
+max_new_tokens: 4
+pad_token_id: 0
+
+save_dir: results/
+run_name: null

@@ -120,6 +120,20 @@ def cmd_finetune_eval(args: argparse.Namespace) -> None:
     run_harmful_eval.main(argv)
 
 
+def cmd_mmlu(args: argparse.Namespace) -> None:
+    from safety_layers_repro import run_mmlu_eval
+
+    config = args.config or EMPTY_CONFIG
+    argv = ["--config", config] + _set_args(
+        model_path=args.model_path,
+        tokenizer_path=args.tokenizer_path,
+        dtype=args.dtype,
+        mmlu_subset=args.mmlu_subset,
+        max_questions=args.max_questions,
+    )
+    run_mmlu_eval.main(argv)
+
+
 def _load_prompt_lines(path: str) -> list[str]:
     with open(path) as f:
         return [line.rstrip("\n") for line in f if line.strip()]
@@ -232,6 +246,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_ft.add_argument("--judge_model", default=None)
     p_ft.add_argument("--judge_max_samples", type=int, default=None)
     p_ft.set_defaults(func=cmd_finetune_eval)
+
+    p_mmlu = sub.add_parser("mmlu", help="Section 4 utility side: MMLU accuracy (S_m).")
+    add_common(p_mmlu)
+    p_mmlu.add_argument("--tokenizer_path", default=None)
+    p_mmlu.add_argument("--mmlu_subset", default=None, help='HF cais/mmlu config name, e.g. "all" (default) or a single subject.')
+    p_mmlu.add_argument("--max_questions", type=int, default=None, help="Paper doesn't specify a sample size; default 500.")
+    p_mmlu.set_defaults(func=cmd_mmlu)
 
     p_ood = sub.add_parser(
         "ood",
