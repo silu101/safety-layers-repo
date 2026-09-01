@@ -67,6 +67,19 @@ Model: gemma-2b-it (focus model, see project discussion). `data/over_rejection.c
 
 **On Normal data: genuinely mixed, and partly contradicts the paper's direction.** The Zou classifier alone shows SPPFT safer (0.306 vs 0.394, matching the paper's claimed direction) -- but BOTH the HarmBench classifier (0.075 vs 0.035) and the independent Claude-Haiku judge (S_h 1.45 vs 1.24) show SPPFT as *slightly less safe* than FullFT here, the opposite of what the paper claims. Since two independent, non-keyword-based measures agree with each other against Zou's outlier direction, this is not just classifier noise on our end -- it's a genuine candidate finding that SPPFT's protective effect does not hold uniformly across data conditions in this reproduction, at least for gemma-2b-it. The Zou/HarmBench disagreement itself (large gaps in both rows) also reinforces discrepancy #11's point: the Zou keyword classifier likely undercounts refusals, the same failure mode already found and partially fixed for Section 3.4's over-rejection task.
 
+## MMLU accuracy (S_m, utility side) on gemma-2b-it
+
+500 MMLU questions (`cais/mmlu`, "all" subjects, seed 42), same 4 trained models. See `mmlu_eval.py`'s docstring -- MMLU itself is a standard public benchmark cited by the paper's Table 2, not something the authors built; the sample size (500) is our own choice, since the paper doesn't specify one either.
+
+| Model | Data | MMLU Accuracy |
+|---|---|---|
+| Full FT | Normal | 0.388 (194/500) |
+| Full FT | Implicit | 0.244 (122/500) |
+| SPPFT | Normal | 0.354 (177/500) |
+| SPPFT | Implicit | 0.242 (121/500) |
+
+**Two findings.** (1) Implicit-data models collapse to near-random-chance accuracy (~24%, vs. 25% expected from guessing on 4-choice questions) regardless of method -- this looks like a real capability casualty of the Implicit fine-tuning scenario itself (training the model to always open with "Sure, the answer is:" regardless of content), not something specific to either Full FT or SPPFT. (2) **On Normal data, SPPFT costs MORE utility than Full FT** (35.4% vs 38.8%) -- the opposite of the paper's claim that SPPFT preserves utility "with little change" relative to Full FT. Combined with the R_h/S_h table above (where SPPFT was also *less* safe than FullFT on Normal data by 2 of 3 metrics), this is a third independent data point that SPPFT's advantages over Full FT do not hold uniformly across data conditions for gemma-2b-it in this reproduction -- specifically, the Normal-data condition shows SPPFT underperforming FullFT on BOTH the security and utility axes simultaneously, not a safety-for-utility tradeoff in either direction.
+
 ## Escalation rule (per project discipline)
 
 If a full r=500 run's mean curves diverge substantially in shape from the qualitative pattern described in the paper (i.e. N-N/M-M flat-high, N-M diverging mid-network) — not just numeric noise — **stop and investigate** before moving to Section 3.4 localization or any validation experiments. Candidate causes to check first: model revision/quantization mismatch, prompt template mismatch, transformers/torch version affecting `generate()` defaults, `num_beams=4` vs. greedy decoding differences.
