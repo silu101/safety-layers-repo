@@ -1,0 +1,338 @@
+"""
+SageMaker entrypoint for the OOD semantic-similarity pipeline (steps 6+7
+of the OOD dataset construction process):
+
+  1. Refreshed positive control: AdvBench vs HarmBench, now including the
+     official "copyright" category (100 behaviors) that the walledai/HarmBench
+     HF mirror is missing -- fetched directly from the official HarmBench
+     GitHub CSV to fill the gap found during source-of-truth verification.
+  2. Full candidate sweep: AdvBench vs BeaverTails + Aegis 2.0 + OpenAI
+     Moderation + SimpleSafetyTests (~59k prompt-category pairs).
+  3. Step 6: build_ood_pool() for the 5 confirmed-OOD categories
+     (hate_discrimination, harassment, sexual_content, privacy,
+     political_misinformation) -- merged, deduplicated, provenance-tagged.
+  4. Step 7: sample_nearest_pairs() manual-verification spot-checks for
+     the 10 borderline/covered categories (physical violence,
+     weapons/explosives, self-harm, cybercrime, fraud/phishing/cheating,
+     other illegal activity, drugs, terrorism/organized crime,
+     manipulation -- sexual harassment has no clean source label, skipped
+     with an explicit note).
+
+All datasets loaded via vectorized pandas ops (NOT per-row Python loops --
+that caused a multi-hour stall when this was first attempted locally).
+Runs on GPU (sentence-transformers auto-detects CUDA) so this should take
+minutes, not hours, unlike the local CPU environment this was migrated
+from after diagnosing local CPU contention issues.
+"""
+import csv
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+
+REPO_URL = "https://github.com/silu101/safety-layers-repo"
+REPO_BRANCH = "ood-similarity-pipeline"
+REPO_DIR = Path("/opt/ml/code/safety-layers-repro")
+SM_MODEL_DIR = Path(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"))
+
+CATEGORY_MAP = {
+    "hate_discrimination": [
+        ("Aegis", "Hate/Identity Hate"),
+        ("BeaverTails", "hate_speech,offensive_language"),
+        ("BeaverTails", "discrimination,stereotype,injustice"),
+        ("OpenAIModeration", "hate"),
+        ("OpenAIModeration", "hate-threatening"),
+    ],
+    "harassment": [
+        ("Aegis", "Harassment"),
+        ("OpenAIModeration", "harassment"),
+    ],
+    "sexual_content": [
+        ("Aegis", "Sexual"),
+        ("BeaverTails", "sexually_explicit,adult_content"),
+        ("OpenAIModeration", "sexual"),
+    ],
+    "privacy": [
+        ("Aegis", "PII/Privacy"),
+        ("BeaverTails", "privacy_violation"),
+    ],
+    "political_misinformation": [
+        ("BeaverTails", "controversial_topics,politics"),
+        ("Aegis", "Political/Misinformation/Conspiracy"),
+    ],
+}
+
+# Step 7: the 10 categories confirmed borderline/covered against AdvBench
+# (mean similarity at or above the 0.551 known-overlap baseline in at
+# least one source), mapped to their best-matching source::label(s).
+# sexual_harassment has no clean single-label source in any of our 4
+# datasets and is intentionally skipped with a note.
+BORDERLINE_MAP = {
+    "physical_violence": [
+        ("BeaverTails", "violence,aiding_and_abetting,incitement"),
+        ("Aegis", "Violence"),
+        ("OpenAIModeration", "violence"),
+    ],
+    "weapons_explosives": [
+        ("Aegis", "Guns and Illegal Weapons"),
+        ("BeaverTails", "drug_abuse,weapons,banned_substance"),
+    ],
+    "self_harm": [
+        ("BeaverTails", "self_harm"),
+        ("Aegis", "Suicide and Self Harm"),
+        ("OpenAIModeration", "self-harm"),
+    ],
+    "cybercrime": [
+        ("Aegis", "Malware"),
+        ("Aegis", "Criminal Planning/Confessions"),
+    ],
+    "fraud_phishing_cheating": [
+        ("BeaverTails", "financial_crime,property_crime,theft"),
+        ("Aegis", "Fraud/Deception"),
+    ],
+    "other_illegal_activity": [
+        ("Aegis", "Illegal Activity"),
+        ("BeaverTails", "non_violent_unethical_behavior"),
+    ],
+    "drugs": [
+        ("Aegis", "Controlled/Regulated Substances"),
+    ],
+    "terrorism_organized_crime": [
+        ("BeaverTails", "terrorism,organized_crime"),
+    ],
+    "manipulation": [
+        ("Aegis", "Manipulation"),  # n=7, small -- read all of them, not a sample
+    ],
+    # "sexual_harassment": NO clean source label in any of our 4 datasets -- skipped.
+}
+
+
+def sh(cmd, **kw):
+    print(f"+ {' '.join(cmd)}", flush=True)
+    subprocess.run(cmd, check=True, **kw)
+
+
+def hf_login():
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        print("[entrypoint] No HF_TOKEN in environment -- skipping HF login.")
+        return
+    from huggingface_hub import login
+    login(token=token)
+    print("[entrypoint] Hugging Face login OK.")
+
+
+def load_advbench(repo_dir):
+    path = repo_dir / "data" / "advbench_malicious.csv"
+    with open(path) as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def load_harmbench_with_copyright():
+    """walledai/HarmBench mirror only exposes standard+contextual (300);
+    the official release also has a 'copyright' category (100 behaviors)
+    that mirror is missing -- fetch it directly from the official GitHub
+    CSV to fill the gap found during source-of-truth verification."""
+    import urllib.request
+    from datasets import load_dataset
+
+    prompts, cats = [], []
+    for cfg in ["standard", "contextual"]:
+        ds = load_dataset("walledai/HarmBench", cfg, split="train")
+        prompts.extend(ds["prompt"])
+        cats.extend([f"HarmBench::{cfg}::{c}" for c in ds["category"]])
+
+    url = "https://raw.githubusercontent.com/centerforaisafety/HarmBench/main/data/behavior_datasets/harmbench_behaviors_text_all.csv"
+    local_csv = "/tmp/harmbench_official.csv"
+    urllib.request.urlretrieve(url, local_csv)
+    with open(local_csv) as f:
+        rows = list(csv.DictReader(f))
+    copyright_behaviors = [r["Behavior"].strip() for r in rows if r["FunctionalCategory"] == "copyright"]
+    prompts.extend(copyright_behaviors)
+    cats.extend(["HarmBench::copyright::copyright"] * len(copyright_behaviors))
+    print(f"[entrypoint] HarmBench: {len(prompts)} total prompts "
+          f"(300 from walledai mirror + {len(copyright_behaviors)} copyright from official GitHub CSV)", flush=True)
+    return prompts, cats
+
+
+def load_beavertails():
+    import pandas as pd
+    from datasets import load_dataset
+    t0 = time.time()
+    ds = load_dataset("PKU-Alignment/BeaverTails", split="30k_train")
+    df = ds.to_pandas()
+    cat_df = pd.json_normalize(df["category"])
+    grouped = defaultdict(list)
+    for cat in cat_df.columns:
+        matched_prompts = df.loc[cat_df[cat].fillna(False).astype(bool), "prompt"]
+        grouped[cat] = matched_prompts.tolist()
+    print(f"[entrypoint] BeaverTails: {len(ds)} rows, "
+          f"{sum(len(v) for v in grouped.values())} labeled pairs ({time.time()-t0:.1f}s)", flush=True)
+    return dict(grouped)
+
+
+def load_aegis():
+    import pandas as pd
+    from datasets import load_dataset
+    t0 = time.time()
+    ds = load_dataset("nvidia/Aegis-AI-Content-Safety-Dataset-2.0", split="train")
+    df = ds.to_pandas()
+    grouped = defaultdict(list)
+    vc = df["violated_categories"].fillna("").astype(str)
+    valid = df[(vc != "") & (vc != "None")]
+    exploded = valid.assign(_cat=valid["violated_categories"].astype(str).str.split(",")).explode("_cat")
+    exploded["_cat"] = exploded["_cat"].str.strip()
+    for cat, sub in exploded.groupby("_cat"):
+        if cat:
+            grouped[cat] = sub["prompt"].tolist()
+    print(f"[entrypoint] Aegis: {len(ds)} rows, "
+          f"{sum(len(v) for v in grouped.values())} labeled pairs ({time.time()-t0:.1f}s)", flush=True)
+    return dict(grouped)
+
+
+def load_openai_moderation():
+    import gzip
+    from huggingface_hub import hf_hub_download
+    path = hf_hub_download("mmathys/openai-moderation-api-evaluation", "samples-1680.jsonl.gz", repo_type="dataset")
+    label_names = {"S": "sexual", "H": "hate", "V": "violence", "HR": "harassment", "SH": "self-harm",
+                   "S3": "sexual-minors", "H2": "hate-threatening", "V2": "violence-graphic"}
+    grouped = defaultdict(list)
+    with gzip.open(path, "rt") as f:
+        for line in f:
+            row = json.loads(line)
+            for key, name in label_names.items():
+                if row.get(key) == 1:
+                    grouped[name].append(row["prompt"])
+    print(f"[entrypoint] OpenAI Moderation: {sum(len(v) for v in grouped.values())} labeled pairs", flush=True)
+    return dict(grouped)
+
+
+def load_simplesafetytests():
+    from datasets import load_dataset
+    ds = load_dataset("walledai/SimpleSafetyTests", split="instruct")
+    prompts = list(ds["prompt"])
+    cats = [f"SimpleSafetyTests::{h}" for h in ds["harm_type"]]
+    print(f"[entrypoint] SimpleSafetyTests: {len(prompts)} prompts", flush=True)
+    return prompts, cats
+
+
+def main():
+    t_start = time.time()
+    out_dir = SM_MODEL_DIR / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    sh(["git", "clone", "-b", REPO_BRANCH, REPO_URL, str(REPO_DIR)])
+    os.chdir(str(REPO_DIR))
+    sh([sys.executable, "-m", "pip", "install", "-e", "."])
+    sh([sys.executable, "-m", "pip", "install", "-q",
+        "sentence-transformers==2.7.0", "datasets", "pandas", "huggingface_hub"])
+    hf_login()
+
+    sys.path.insert(0, str(REPO_DIR / "src"))
+    import numpy as np
+    from safety_layers_repro.ood_similarity import (
+        run_similarity_check, build_ood_pool, sample_nearest_pairs, load_embedder,
+    )
+
+    import torch
+    print(f"[entrypoint] CUDA available: {torch.cuda.is_available()}", flush=True)
+
+    print("\n=== Loading datasets ===", flush=True)
+    id_prompts = load_advbench(REPO_DIR)
+    print(f"AdvBench (ID anchor): {len(id_prompts)} prompts", flush=True)
+
+    harmbench_prompts, harmbench_cats = load_harmbench_with_copyright()
+    beavertails = load_beavertails()
+    aegis = load_aegis()
+    openai_mod = load_openai_moderation()
+    sst_prompts, sst_cats = load_simplesafetytests()
+
+    source_prompts = {"BeaverTails": beavertails, "Aegis": aegis, "OpenAIModeration": openai_mod}
+
+    # --- 1. Refreshed positive control: AdvBench vs HarmBench (now with copyright) ---
+    print("\n=== Positive control: AdvBench vs HarmBench (incl. copyright) ===", flush=True)
+    hb_sims, hb_summary = run_similarity_check(id_prompts, harmbench_prompts, harmbench_cats, threshold=0.7)
+    hb_overall = {
+        "n": len(hb_sims), "mean": float(hb_sims.mean()), "median": float(np.median(hb_sims)),
+        "pct_ge_0.7": float((hb_sims >= 0.7).mean()), "pct_ge_0.85": float((hb_sims >= 0.85).mean()),
+    }
+    print(f"Overall: mean={hb_overall['mean']:.3f} median={hb_overall['median']:.3f} "
+          f"%>=0.7={hb_overall['pct_ge_0.7']:.1%} %>=0.85={hb_overall['pct_ge_0.85']:.1%}", flush=True)
+    with open(out_dir / "harmbench_positive_control.json", "w") as f:
+        json.dump({"overall": hb_overall, "per_category": hb_summary}, f, indent=2)
+
+    # --- 2. Full candidate sweep ---
+    print("\n=== Full candidate sweep (BeaverTails+Aegis+OpenAIModeration+SimpleSafetyTests) ===", flush=True)
+    all_prompts, all_cats = [], []
+    for name, grouped in source_prompts.items():
+        for cat, prompts in grouped.items():
+            all_prompts.extend(prompts)
+            all_cats.extend([f"{name}::{cat}"] * len(prompts))
+    all_prompts.extend(sst_prompts)
+    all_cats.extend(sst_cats)
+    print(f"Total candidate pairs: {len(all_prompts)}", flush=True)
+    sweep_sims, sweep_summary = run_similarity_check(id_prompts, all_prompts, all_cats, threshold=0.7)
+    with open(out_dir / "full_sweep_summary.json", "w") as f:
+        json.dump(sweep_summary, f, indent=2)
+    print("Saved full_sweep_summary.json", flush=True)
+
+    # --- 3. Step 6: build the 5-category OOD pool ---
+    print("\n=== Step 6: building merged, deduplicated OOD pools ===", flush=True)
+    pools = build_ood_pool(CATEGORY_MAP, source_prompts, id_prompts=id_prompts, dedup_threshold=0.9, verbose=True)
+    pool_summary = {}
+    for cat, data in pools.items():
+        recheck = data["similarity_recheck"] or {}
+        pool_summary[cat] = {
+            "n_before_dedup": data["n_before_dedup"], "n_after_dedup": data["n_after_dedup"],
+            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"], **recheck,
+        }
+        with open(out_dir / f"ood_pool_{cat}.json", "w") as f:
+            json.dump(data["records"], f, indent=2)
+    with open(out_dir / "ood_pool_summary.json", "w") as f:
+        json.dump(pool_summary, f, indent=2)
+    print("Step 6 done:", json.dumps(pool_summary, indent=2), flush=True)
+
+    # --- 4. Step 7: manual-verification sampling for the 10 borderline categories ---
+    print("\n=== Step 7: manual-verification sampling (10 borderline categories) ===", flush=True)
+    verification = {}
+    for merged_cat, sources in BORDERLINE_MAP.items():
+        cat_prompts, cat_labels = [], []
+        for source_name, source_label in sources:
+            for p in source_prompts.get(source_name, {}).get(source_label, []):
+                cat_prompts.append(p)
+                cat_labels.append(f"{source_name}::{source_label}")
+        n = len(cat_prompts)
+        print(f"  {merged_cat}: {n} prompts from {len(sources)} source label(s)", flush=True)
+        if n == 0:
+            verification[merged_cat] = {"note": "no prompts found", "sources": sources}
+            continue
+
+        result = {"n": n, "sources": sources}
+        if n <= 20:
+            result["all"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=n, mode="random")
+        else:
+            result["random_sample"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=20, mode="random")
+            result["highest_similarity"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=15, mode="highest")
+            result["lowest_similarity"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=15, mode="lowest")
+        verification[merged_cat] = result
+
+    verification["sexual_harassment"] = {
+        "note": "No clean single-category source label exists in BeaverTails/Aegis/OpenAIModeration/SimpleSafetyTests "
+                "for 'sexual harassment' specifically (as distinct from general harassment or sexual content) -- skipped. "
+                "Would need a dedicated dataset or manual curation to cover this category."
+    }
+
+    with open(out_dir / "step7_manual_verification.json", "w") as f:
+        json.dump(verification, f, indent=2)
+    print("Step 7 done -> step7_manual_verification.json", flush=True)
+
+    print(f"\n[entrypoint] ALL DONE in {time.time()-t_start:.1f}s total.", flush=True)
+    print(f"[entrypoint] Results in {out_dir}: {sorted(p.name for p in out_dir.iterdir())}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
