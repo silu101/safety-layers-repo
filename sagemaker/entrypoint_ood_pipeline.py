@@ -6,8 +6,14 @@ of the OOD dataset construction process):
      official "copyright" category (100 behaviors) that the walledai/HarmBench
      HF mirror is missing -- fetched directly from the official HarmBench
      GitHub CSV to fill the gap found during source-of-truth verification.
-  2. Full candidate sweep: AdvBench vs BeaverTails + Aegis 2.0 + OpenAI
-     Moderation + SimpleSafetyTests (~59k prompt-category pairs).
+  2. Full candidate sweep: AdvBench vs all 6 of the ICLR paper's Table 2
+     candidate datasets -- BeaverTails, Aegis 2.0, OpenAI Moderation,
+     MaliciousInstruct, Anthropic Red Team, and SimpleSafetyTests.
+     MaliciousInstruct's official mirror has no category labels, so labels
+     are recovered from the official paper repo's positional block
+     structure (10 categories x 10 prompts, in Table 2's listed order).
+     Anthropic Red Team's full release is 38,961 transcripts but only 742
+     carry a human topic tag -- only the tagged subset is used.
   3. Step 6: build_ood_pool() for the 5 confirmed-OOD categories
      (hate_discrimination, harassment, sexual_content, privacy,
      political_misinformation) -- merged, deduplicated, provenance-tagged.
@@ -46,23 +52,33 @@ CATEGORY_MAP = {
         ("BeaverTails", "discrimination,stereotype,injustice"),
         ("OpenAIModeration", "hate"),
         ("OpenAIModeration", "hate-threatening"),
+        ("AnthropicRedTeam", "Discrimination & injustice"),
+        ("AnthropicRedTeam", "Hate speech & offensive language"),
     ],
     "harassment": [
         ("Aegis", "Harassment"),
         ("OpenAIModeration", "harassment"),
+        ("AnthropicRedTeam", "Bullying & harassment"),
+        ("MaliciousInstruct", "cyberbullying"),
+        ("MaliciousInstruct", "false_accusation"),
     ],
     "sexual_content": [
         ("Aegis", "Sexual"),
         ("BeaverTails", "sexually_explicit,adult_content"),
         ("OpenAIModeration", "sexual"),
+        ("AnthropicRedTeam", "Adult content"),
     ],
     "privacy": [
         ("Aegis", "PII/Privacy"),
         ("BeaverTails", "privacy_violation"),
+        ("AnthropicRedTeam", "Soliciting personally identifiable information"),
     ],
     "political_misinformation": [
         ("BeaverTails", "controversial_topics,politics"),
         ("Aegis", "Political/Misinformation/Conspiracy"),
+        ("AnthropicRedTeam", "Conspiracy theories & misinformation"),
+        ("MaliciousInstruct", "defamation"),  # per HarmBench's own taxonomy, defamation sits
+                                                # under misinformation/disinformation, not harassment
     ],
 }
 
@@ -76,38 +92,60 @@ BORDERLINE_MAP = {
         ("BeaverTails", "violence,aiding_and_abetting,incitement"),
         ("Aegis", "Violence"),
         ("OpenAIModeration", "violence"),
+        ("AnthropicRedTeam", "Violence & incitement"),
     ],
     "weapons_explosives": [
         ("Aegis", "Guns and Illegal Weapons"),
         ("BeaverTails", "drug_abuse,weapons,banned_substance"),
+        ("AnthropicRedTeam", "Weapons"),
     ],
     "self_harm": [
         ("BeaverTails", "self_harm"),
         ("Aegis", "Suicide and Self Harm"),
         ("OpenAIModeration", "self-harm"),
+        ("AnthropicRedTeam", "Self-harm"),
     ],
     "cybercrime": [
         ("Aegis", "Malware"),
         ("Aegis", "Criminal Planning/Confessions"),
+        ("MaliciousInstruct", "hacking"),
     ],
     "fraud_phishing_cheating": [
         ("BeaverTails", "financial_crime,property_crime,theft"),
         ("Aegis", "Fraud/Deception"),
+        ("AnthropicRedTeam", "Theft"),
+        ("AnthropicRedTeam", "Fraud & deception"),
+        ("MaliciousInstruct", "theft"),
+        ("MaliciousInstruct", "tax_fraud"),
+        ("MaliciousInstruct", "fraud"),
     ],
     "other_illegal_activity": [
         ("Aegis", "Illegal Activity"),
         ("BeaverTails", "non_violent_unethical_behavior"),
+        ("AnthropicRedTeam", "Non-violent unethical behavior (e.g. lying, cheating, etc.)"),
+        ("AnthropicRedTeam", "Property crime & vandalism"),
+        ("AnthropicRedTeam", "Sexual exploitation & human trafficking"),  # per HarmBench's taxonomy,
+                                    # grouped under "Illegal Activities" rather than sexual_content --
+                                    # kept out of the actively-used OOD pool deliberately (see note below).
+        ("MaliciousInstruct", "sabotage"),
     ],
     "drugs": [
         ("Aegis", "Controlled/Regulated Substances"),
+        ("AnthropicRedTeam", "Substance abuse & banned substances"),
+        ("MaliciousInstruct", "illegal_drug_use"),
     ],
     "terrorism_organized_crime": [
         ("BeaverTails", "terrorism,organized_crime"),
+        ("AnthropicRedTeam", "Terrorism & organized crime"),
     ],
     "manipulation": [
-        ("Aegis", "Manipulation"),  # n=7, small -- read all of them, not a sample
+        ("Aegis", "Manipulation"),  # n=7, small -- now supplemented by MaliciousInstruct's dedicated block
+        ("MaliciousInstruct", "manipulation"),
     ],
-    # "sexual_harassment": NO clean source label in any of our 4 datasets -- skipped.
+    # "sexual_harassment": still no clean single source label anywhere -- skipped.
+    # "Animal abuse" and "Child abuse" tags exist in Anthropic Red Team (n=28, n=19) but have
+    # no mapping in the ICLR paper's 15-category list -- left out of both maps, visible only in
+    # the raw full-sweep table, not classified as OOD or covered.
 }
 
 
@@ -220,6 +258,70 @@ def load_simplesafetytests():
     return prompts, cats
 
 
+# MaliciousInstruct (Huang et al. 2024): the walledai HF mirror exposes NO
+# category labels at all. The official paper repo's data file has none
+# either, but its 100 prompts are laid out as 10 clean blocks of 10, in
+# exactly the order Table 2 describes the dataset's topics -- confirmed by
+# reading the raw file. Using that positional structure to recover labels
+# a flat HF mirror can't give us.
+MALICIOUS_INSTRUCT_CATEGORIES = [
+    "manipulation", "sabotage", "theft", "defamation", "cyberbullying",
+    "false_accusation", "tax_fraud", "hacking", "fraud", "illegal_drug_use",
+]
+
+
+def load_malicious_instruct():
+    import urllib.request
+    url = "https://raw.githubusercontent.com/Princeton-SysML/Jailbreak_LLM/main/data/MaliciousInstruct.txt"
+    local_path = "/tmp/MaliciousInstruct.txt"
+    urllib.request.urlretrieve(url, local_path)
+    with open(local_path) as f:
+        lines = [l.strip() for l in f if l.strip()]
+    if len(lines) != 100:
+        print(f"[entrypoint] WARNING: expected 100 MaliciousInstruct lines, got {len(lines)} -- "
+              f"positional category labels may be wrong.", flush=True)
+    grouped = defaultdict(list)
+    for i, prompt in enumerate(lines):
+        cat = MALICIOUS_INSTRUCT_CATEGORIES[i // 10] if i // 10 < len(MALICIOUS_INSTRUCT_CATEGORIES) else "other"
+        grouped[cat].append(prompt)
+    print(f"[entrypoint] MaliciousInstruct: {len(lines)} prompts across {len(grouped)} categories "
+          f"(official Princeton-SysML/Jailbreak_LLM source, positionally labeled)", flush=True)
+    return dict(grouped)
+
+
+# Anthropic Red Team (Ganguli et al. 2022): the full red-team-attempts
+# release has 38,961 transcripts, but only 742 carry a human-assigned
+# topic tag (the rest are untagged) -- using only the tagged subset for
+# category-level analysis, consistent with every other source here.
+# task_description (a short human-written summary of the red-teaming
+# goal) is used as the "prompt" text rather than the full multi-turn
+# transcript, for consistency with the single-instruction style of every
+# other candidate dataset.
+ANTHROPIC_REDTEAM_SKIP_TAGS = {"N/A - Invalid attempt", "Other"}
+
+
+def load_anthropic_redteam():
+    import gzip
+    from huggingface_hub import hf_hub_download
+    path = hf_hub_download("Anthropic/hh-rlhf", "red-team-attempts/red_team_attempts.jsonl.gz", repo_type="dataset")
+    with gzip.open(path, "rt") as f:
+        data = json.load(f)
+    grouped = defaultdict(list)
+    n_tagged = 0
+    for row in data:
+        tags = row.get("tags")
+        if not tags:
+            continue
+        n_tagged += 1
+        for tag in tags:
+            if tag in ANTHROPIC_REDTEAM_SKIP_TAGS:
+                continue
+            grouped[tag].append(row["task_description"])
+    print(f"[entrypoint] Anthropic Red Team: {n_tagged}/{len(data)} transcripts tagged, "
+          f"{sum(len(v) for v in grouped.values())} labeled pairs across {len(grouped)} categories", flush=True)
+    return dict(grouped)
+
+
 def main():
     t_start = time.time()
     out_dir = SM_MODEL_DIR / "results"
@@ -250,8 +352,13 @@ def main():
     aegis = load_aegis()
     openai_mod = load_openai_moderation()
     sst_prompts, sst_cats = load_simplesafetytests()
+    malicious_instruct = load_malicious_instruct()
+    anthropic_redteam = load_anthropic_redteam()
 
-    source_prompts = {"BeaverTails": beavertails, "Aegis": aegis, "OpenAIModeration": openai_mod}
+    source_prompts = {
+        "BeaverTails": beavertails, "Aegis": aegis, "OpenAIModeration": openai_mod,
+        "MaliciousInstruct": malicious_instruct, "AnthropicRedTeam": anthropic_redteam,
+    }
 
     # --- 1. Refreshed positive control: AdvBench vs HarmBench (now with copyright) ---
     print("\n=== Positive control: AdvBench vs HarmBench (incl. copyright) ===", flush=True)
@@ -266,7 +373,7 @@ def main():
         json.dump({"overall": hb_overall, "per_category": hb_summary}, f, indent=2)
 
     # --- 2. Full candidate sweep ---
-    print("\n=== Full candidate sweep (BeaverTails+Aegis+OpenAIModeration+SimpleSafetyTests) ===", flush=True)
+    print("\n=== Full candidate sweep (BeaverTails+Aegis+OpenAIModeration+MaliciousInstruct+AnthropicRedTeam+SimpleSafetyTests) ===", flush=True)
     all_prompts, all_cats = [], []
     for name, grouped in source_prompts.items():
         for cat, prompts in grouped.items():
