@@ -193,16 +193,25 @@ def build_ood_pool(
     source_prompts: Dict[str, Dict[str, List[str]]],
     id_prompts: Optional[Sequence[str]] = None,
     dedup_threshold: float = 0.9,
+    max_similarity: Optional[float] = None,
     model_name: str = DEFAULT_MODEL,
     verbose: bool = False,
 ) -> Dict[str, dict]:
-    """Builds provenance-tagged, deduplicated OOD prompt pools per merged
-    category -- the generic, method-agnostic step: output is just
-    (prompt, source_dataset, source_label, merged_category) records, usable
-    by any of the 8 methods' OOD evaluation, not specific to Safety Layers.
+    """Builds provenance-tagged, deduplicated, per-prompt-filtered OOD
+    prompt pools per merged category -- the generic, method-agnostic step:
+    output is just (prompt, source_dataset, source_label, merged_category)
+    records, usable by any of the 8 methods' OOD evaluation, not specific
+    to Safety Layers.
 
     category_map: {merged_category: [(source_dataset_name, source_label), ...]}
     source_prompts: {source_dataset_name: {source_label: [prompts...]}}
+    max_similarity: if given (requires id_prompts), drops any individual
+        prompt whose nearest-neighbor similarity to id_prompts is >= this
+        value, even from a category whose overall mean is well below it.
+        Intended to be set to a positive-control baseline (e.g. the
+        AdvBench<->HarmBench known-overlap mean) -- a category can look
+        confidently OOD on average while still containing a handful of
+        prompts that are themselves indistinguishable from known overlap.
         (i.e. the raw (prompt, category) pairs each dataset loader already
         produces, regrouped by label)
     id_prompts: if given, re-runs the AdvBench similarity check on each
@@ -252,24 +261,44 @@ def build_ood_pool(
             print(f"[build_ood_pool] {merged_cat}: {n_before} -> {n_after} after dedup", flush=True)
 
         recheck = None
+        n_filtered_out = 0
         if id_emb is not None and n_after > 0:
             deduped_emb = pool_emb[keep_idx]
             nn_idx, sims = nearest_neighbor_index_and_similarity(deduped_emb, id_emb)
-            recheck = {
-                "mean_similarity": float(sims.mean()),
-                "median_similarity": float(np.median(sims)),
-                "pct_survive_0.7": float((sims < 0.7).mean()),
-            }
             for rec, sim, idx in zip(deduped_records, sims, nn_idx):
                 rec["advbench_similarity"] = float(sim)
                 rec["matched_advbench_prompt"] = id_prompts[idx]
-            if verbose:
-                print(f"[build_ood_pool] {merged_cat}: post-merge mean sim to AdvBench = {recheck['mean_similarity']:.3f}", flush=True)
+
+            # Per-prompt filter: a category can average well below the known-
+            # overlap baseline while still containing individual prompts that
+            # are themselves at or above it -- the category-level mean never
+            # catches that. Drop those regardless of the category's overall
+            # verdict; max_similarity is meant to be set to the positive-
+            # control baseline (e.g. AdvBench<->HarmBench mean) by the caller.
+            if max_similarity is not None:
+                keep_mask = sims < max_similarity
+                n_filtered_out = int((~keep_mask).sum())
+                deduped_records = [r for r, keep in zip(deduped_records, keep_mask) if keep]
+                sims = sims[keep_mask]
+                n_after = len(deduped_records)
+                if verbose and n_filtered_out:
+                    print(f"[build_ood_pool] {merged_cat}: dropped {n_filtered_out} prompts "
+                          f"at/above max_similarity={max_similarity:.3f}", flush=True)
+
+            if len(sims) > 0:
+                recheck = {
+                    "mean_similarity": float(sims.mean()),
+                    "median_similarity": float(np.median(sims)),
+                    "pct_survive_0.7": float((sims < 0.7).mean()),
+                }
+                if verbose:
+                    print(f"[build_ood_pool] {merged_cat}: post-filter mean sim to AdvBench = {recheck['mean_similarity']:.3f}", flush=True)
 
         result[merged_cat] = {
             "records": deduped_records,
             "n_before_dedup": n_before,
             "n_after_dedup": n_after,
+            "n_filtered_by_similarity": n_filtered_out,
             "similarity_recheck": recheck,
         }
     return result
