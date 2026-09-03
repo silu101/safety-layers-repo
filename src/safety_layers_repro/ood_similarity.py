@@ -254,14 +254,15 @@ def build_ood_pool(
         recheck = None
         if id_emb is not None and n_after > 0:
             deduped_emb = pool_emb[keep_idx]
-            sims = nearest_neighbor_similarity(deduped_emb, id_emb)
+            nn_idx, sims = nearest_neighbor_index_and_similarity(deduped_emb, id_emb)
             recheck = {
                 "mean_similarity": float(sims.mean()),
                 "median_similarity": float(np.median(sims)),
                 "pct_survive_0.7": float((sims < 0.7).mean()),
             }
-            for rec, sim in zip(deduped_records, sims):
+            for rec, sim, idx in zip(deduped_records, sims, nn_idx):
                 rec["advbench_similarity"] = float(sim)
+                rec["matched_advbench_prompt"] = id_prompts[idx]
             if verbose:
                 print(f"[build_ood_pool] {merged_cat}: post-merge mean sim to AdvBench = {recheck['mean_similarity']:.3f}", flush=True)
 
