@@ -201,38 +201,68 @@ def load_harmbench_with_copyright():
 
 
 def load_beavertails():
+    """Returns (grouped, ambiguous_prompts). ambiguous_prompts flags any
+    prompt text that appears more than once in the raw dataset with a
+    DIFFERENT set of category flags across its occurrences -- BeaverTails
+    pairs one prompt with multiple independently-sampled responses, each
+    independently rated, so the same prompt text can carry different (or
+    no) category flags depending purely on which response it's paired
+    with in that row. This is surfaced as a badge in the curation tool,
+    not used to filter -- the signal is too noisy to trust blindly (some
+    of it is genuine prompt/response ambiguity, some is just rater
+    inconsistency on near-identical harmful responses)."""
     import pandas as pd
     from datasets import load_dataset
     t0 = time.time()
     ds = load_dataset("PKU-Alignment/BeaverTails", split="30k_train")
     df = ds.to_pandas()
     cat_df = pd.json_normalize(df["category"])
+
+    label_signature = cat_df.apply(lambda row: frozenset(c for c in cat_df.columns if row[c]), axis=1)
+    sig_by_prompt = defaultdict(set)
+    for prompt, sig in zip(df["prompt"], label_signature):
+        sig_by_prompt[prompt].add(sig)
+    ambiguous_prompts = {p for p, sigs in sig_by_prompt.items() if len(sigs) > 1}
+
     grouped = defaultdict(list)
     for cat in cat_df.columns:
         matched_prompts = df.loc[cat_df[cat].fillna(False).astype(bool), "prompt"]
         grouped[cat] = matched_prompts.tolist()
     print(f"[entrypoint] BeaverTails: {len(ds)} rows, "
-          f"{sum(len(v) for v in grouped.values())} labeled pairs ({time.time()-t0:.1f}s)", flush=True)
-    return dict(grouped)
+          f"{sum(len(v) for v in grouped.values())} labeled pairs, "
+          f"{len(ambiguous_prompts)} prompts with inconsistent labeling ({time.time()-t0:.1f}s)", flush=True)
+    return dict(grouped), ambiguous_prompts
 
 
 def load_aegis():
+    """Returns (grouped, ambiguous_prompts) -- same concept as
+    load_beavertails: a prompt text flagged ambiguous if it appears more
+    than once with a different violated_categories outcome (Aegis rows
+    are also (prompt, response) pairs, not unique prompts)."""
     import pandas as pd
     from datasets import load_dataset
     t0 = time.time()
     ds = load_dataset("nvidia/Aegis-AI-Content-Safety-Dataset-2.0", split="train")
     df = ds.to_pandas()
+
+    vc_all = df["violated_categories"].fillna("").astype(str)
+    sig_by_prompt = defaultdict(set)
+    for prompt, vc in zip(df["prompt"], vc_all):
+        sig = frozenset(c.strip() for c in vc.split(",") if c.strip())
+        sig_by_prompt[prompt].add(sig)
+    ambiguous_prompts = {p for p, sigs in sig_by_prompt.items() if len(sigs) > 1}
+
     grouped = defaultdict(list)
-    vc = df["violated_categories"].fillna("").astype(str)
-    valid = df[(vc != "") & (vc != "None")]
+    valid = df[(vc_all != "") & (vc_all != "None")]
     exploded = valid.assign(_cat=valid["violated_categories"].astype(str).str.split(",")).explode("_cat")
     exploded["_cat"] = exploded["_cat"].str.strip()
     for cat, sub in exploded.groupby("_cat"):
         if cat:
             grouped[cat] = sub["prompt"].tolist()
     print(f"[entrypoint] Aegis: {len(ds)} rows, "
-          f"{sum(len(v) for v in grouped.values())} labeled pairs ({time.time()-t0:.1f}s)", flush=True)
-    return dict(grouped)
+          f"{sum(len(v) for v in grouped.values())} labeled pairs, "
+          f"{len(ambiguous_prompts)} prompts with inconsistent labeling ({time.time()-t0:.1f}s)", flush=True)
+    return dict(grouped), ambiguous_prompts
 
 
 def load_openai_moderation():
@@ -351,8 +381,8 @@ def main():
     print(f"AdvBench (ID anchor): {len(id_prompts)} prompts", flush=True)
 
     harmbench_prompts, harmbench_cats = load_harmbench_with_copyright()
-    beavertails = load_beavertails()
-    aegis = load_aegis()
+    beavertails, beavertails_ambiguous = load_beavertails()
+    aegis, aegis_ambiguous = load_aegis()
     openai_mod = load_openai_moderation()
     sst_prompts, sst_cats = load_simplesafetytests()
     malicious_instruct = load_malicious_instruct()
@@ -362,6 +392,11 @@ def main():
         "BeaverTails": beavertails, "Aegis": aegis, "OpenAIModeration": openai_mod,
         "MaliciousInstruct": malicious_instruct, "AnthropicRedTeam": anthropic_redteam,
     }
+    # Prompt texts flagged as carrying inconsistent safety/category labels
+    # elsewhere in their OWN source dataset (see load_beavertails/load_aegis
+    # docstrings) -- surfaced as a badge in the curation tool, not used to
+    # filter anything out.
+    ambiguous_by_source = {"BeaverTails": beavertails_ambiguous, "Aegis": aegis_ambiguous}
 
     # --- 1. Refreshed positive control: AdvBench vs HarmBench (now with copyright) ---
     print("\n=== Positive control: AdvBench vs HarmBench (incl. copyright) ===", flush=True)
@@ -415,6 +450,17 @@ def main():
             "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"],
             "source_breakdown": data.get("source_breakdown", {}), **recheck,
         }
+        # Tag (don't filter) records whose exact prompt text also appears
+        # elsewhere in ITS OWN source dataset with a different safety/
+        # category outcome -- surfaced to the curator as a badge, not acted
+        # on automatically (see load_beavertails/load_aegis docstrings for
+        # why an automatic filter here would be unreliable).
+        n_ambiguous = 0
+        for rec in data["records"]:
+            amb_set = ambiguous_by_source.get(rec["source_dataset"])
+            rec["ambiguous_label"] = bool(amb_set and rec["prompt"] in amb_set)
+            n_ambiguous += rec["ambiguous_label"]
+        pool_summary[cat]["n_ambiguous_label"] = n_ambiguous
         with open(out_dir / f"ood_pool_{cat}.json", "w") as f:
             json.dump(data["records"], f, indent=2)
     pool_summary["sexual_harassment"] = {
