@@ -484,7 +484,8 @@ function renderRail(){
       <button data-jump="step1"><span>Step 1 &middot; ID Anchor</span></button>
       <button data-jump="step2"><span>Step 2 &middot; The Tool</span></button>
       <button data-jump="step3"><span>Step 3 &middot; Positive Control</span></button>
-      <button data-jump="step4"><span>Step 4 &middot; Full Sweep</span></button>`;
+      <button data-jump="step4"><span>Step 4 &middot; Full Sweep</span></button>
+      <button data-jump="step5"><span>Step 5 &middot; OOD Validity Criteria</span></button>`;
     rail.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
       document.getElementById(b.dataset.jump)?.scrollIntoView({behavior:'smooth', block:'start'});
     }));
@@ -703,9 +704,9 @@ function renderOverview(){
   document.getElementById('list').innerHTML = `
   <div class="overview">
     <p class="step-eyebrow">Semantic OOD Dataset Construction</p>
-    <p class="muted">A record of steps 1&ndash;4: how the in-distribution anchor, similarity tool, and calibration baseline were established before curating the final dataset (see the <strong>Curate Dataset</strong> tab).</p>
+    <p class="muted">A record of steps 1&ndash;5: how the in-distribution anchor, similarity tool, and calibration baseline were established, and what formally counts as OOD, before curating the final dataset (see the <strong>Curate Dataset</strong> tab).</p>
     <div class="toc">
-      <a href="#step1">1. ID Anchor</a><a href="#step2">2. The Tool</a><a href="#step3">3. Positive Control</a><a href="#step4">4. Full Sweep</a>
+      <a href="#step1">1. ID Anchor</a><a href="#step2">2. The Tool</a><a href="#step3">3. Positive Control</a><a href="#step4">4. Full Sweep</a><a href="#step5">5. OOD Validity Criteria</a>
     </div>
 
     <h2 id="step1"><span class="step-eyebrow">Step 1</span><br>Choosing the ID anchor</h2>
@@ -754,6 +755,13 @@ function renderOverview(){
       </div>
     </div>
 
+    <h2 id="step5"><span class="step-eyebrow">Step 5</span><br>Formal OOD validity criteria</h2>
+    <p>Every check above (Steps 3&ndash;4) exists to answer one question precisely enough to be falsifiable: does a candidate category actually count as OOD for a given method, or only in name? A candidate category is valid OOD for a method only if it satisfies all three:</p>
+    <div class="verify-check"><span class="ok">a</span><span><strong>No acknowledged lineage overlap</strong> with the method's ID data &mdash; checked against each dataset's own construction documentation. This is exactly why the AdvBench&harr;HarmBench positive control exists: the ICLR paper's own methodology acknowledges that overlap, so it serves as a known-positive case to calibrate the other two checks against.</span></div>
+    <div class="verify-check"><span class="ok">b</span><span><strong>Near-duplicate rate ~0 against the ID set</strong> &mdash; not just "somewhat lower" similarity. Every prompt in the curated pool is filtered to sit strictly below the ${pc.mean.toFixed(3)} known-overlap baseline.</span></div>
+    <div class="verify-check"><span class="ok">c</span><span><strong>Category distribution not dominated by the same categories the ID data uses</strong> &mdash; AdvBench is dominated by violence, weapons, crime, and fraud content; a candidate category built from the same content types fails this test regardless of which dataset it's sourced from or what it's named.</span></div>
+    <p class="muted">Fail any one of the three and the category is contaminated for that method, regardless of the source dataset's name. This is method-relative, not a fixed property of any dataset &mdash; a category that's OOD for Safety Layers (ID&nbsp;=&nbsp;AdvBench) may not be OOD for another method calibrated on different data.</p>
+    <div class="callout"><strong>What this means for testing:</strong> the 5 confirmed categories aren't merely dissimilar from AdvBench &mdash; they're semantic territory an AdvBench-calibrated method has never been exercised against at all. There is no empirical basis for assuming a safety intervention's behavior holds on hate/discrimination, harassment, sexual content, privacy violations, or political/misinformation content, because the evaluation signal that shaped it never included any of it. Whether it generalizes is exactly the open question the OOD test is for &mdash; not something to assume either way going in.</div>
     <p class="muted" style="margin-top:28px;">This ranking led to classifying 5 of the ICLR paper's 15 target categories as confirmed OOD relative to AdvBench (hate/discrimination, harassment, sexual content, privacy, political/misinformation), and 10 as borderline or already covered by AdvBench-style content. The <strong>Curate Dataset</strong> tab shows every deduplicated candidate for all 15, with an adjustable per-category similarity threshold and manual per-prompt include/exclude, rather than a fixed cutoff decided in advance.</p>
   </div>
   `;
