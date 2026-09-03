@@ -16,7 +16,10 @@ of the OOD dataset construction process):
      carry a human topic tag -- only the tagged subset is used.
   3. Step 6: build_ood_pool() for the 5 confirmed-OOD categories
      (hate_discrimination, harassment, sexual_content, privacy,
-     political_misinformation) -- merged, deduplicated, provenance-tagged.
+     political_misinformation) -- merged, deduplicated, provenance-tagged,
+     and per-prompt filtered against the positive-control baseline (a
+     category can average well below that baseline while still containing
+     individual prompts at or above it).
   4. Step 7: sample_nearest_pairs() manual-verification spot-checks for
      the 10 borderline/covered categories (physical violence,
      weapons/explosives, self-harm, cybercrime, fraud/phishing/cheating,
@@ -388,14 +391,21 @@ def main():
     print("Saved full_sweep_summary.json", flush=True)
 
     # --- 3. Step 6: build the 5-category OOD pool ---
-    print("\n=== Step 6: building merged, deduplicated OOD pools ===", flush=True)
-    pools = build_ood_pool(CATEGORY_MAP, source_prompts, id_prompts=id_prompts, dedup_threshold=0.9, verbose=True)
+    # max_similarity uses this run's own freshly-computed positive-control
+    # mean: a category can average well below that baseline while still
+    # containing individual prompts at or above it (found on inspection --
+    # 7-16% of every pool). Drop those regardless of the category verdict.
+    print(f"\n=== Step 6: building merged, deduplicated, filtered OOD pools "
+          f"(max_similarity={hb_overall['mean']:.3f}) ===", flush=True)
+    pools = build_ood_pool(CATEGORY_MAP, source_prompts, id_prompts=id_prompts,
+                            dedup_threshold=0.9, max_similarity=hb_overall["mean"], verbose=True)
     pool_summary = {}
     for cat, data in pools.items():
         recheck = data["similarity_recheck"] or {}
         pool_summary[cat] = {
             "n_before_dedup": data["n_before_dedup"], "n_after_dedup": data["n_after_dedup"],
-            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"], **recheck,
+            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"],
+            "n_filtered_by_similarity": data.get("n_filtered_by_similarity", 0), **recheck,
         }
         with open(out_dir / f"ood_pool_{cat}.json", "w") as f:
             json.dump(data["records"], f, indent=2)
