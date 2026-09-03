@@ -14,18 +14,18 @@ of the OOD dataset construction process):
      structure (10 categories x 10 prompts, in Table 2's listed order).
      Anthropic Red Team's full release is 38,961 transcripts but only 742
      carry a human topic tag -- only the tagged subset is used.
-  3. Step 6: build_ood_pool() for the 5 confirmed-OOD categories
-     (hate_discrimination, harassment, sexual_content, privacy,
-     political_misinformation) -- merged, deduplicated, provenance-tagged,
-     and per-prompt filtered against the positive-control baseline (a
-     category can average well below that baseline while still containing
-     individual prompts at or above it).
-  4. Step 7: sample_nearest_pairs() manual-verification spot-checks for
-     the 10 borderline/covered categories (physical violence,
-     weapons/explosives, self-harm, cybercrime, fraud/phishing/cheating,
-     other illegal activity, drugs, terrorism/organized crime,
-     manipulation -- sexual harassment has no clean source label, skipped
-     with an explicit note).
+  3. Steps 6+7 unified: build_ood_pool() for ALL 15 target categories (the
+     5 confirmed-OOD ones and the 10 borderline/covered ones) through the
+     same code path -- merged, deduplicated, provenance-tagged, similarity
+     + matched-AdvBench-prompt attached to every record, but with NO
+     similarity threshold applied server-side. The inspector website
+     applies an adjustable threshold and lets a human include/exclude
+     individual prompts, rather than the pipeline pre-deciding a fixed
+     cutoff -- a category can average well below any given baseline while
+     still containing individual prompts at or above it, so the per-prompt
+     decision belongs with whoever is building the final dataset, not
+     baked into this run. sexual_harassment has no clean source label in
+     any of the 6 candidate datasets and is recorded with an explicit note.
 
 All datasets loaded via vectorized pandas ops (NOT per-row Python loops --
 that caused a multi-hour stall when this was first attempted locally).
@@ -340,7 +340,7 @@ def main():
     sys.path.insert(0, str(REPO_DIR / "src"))
     import numpy as np
     from safety_layers_repro.ood_similarity import (
-        run_similarity_check, build_ood_pool, sample_nearest_pairs, load_embedder,
+        run_similarity_check, build_ood_pool, load_embedder,
     )
 
     import torch
@@ -390,62 +390,41 @@ def main():
         json.dump(sweep_summary, f, indent=2)
     print("Saved full_sweep_summary.json", flush=True)
 
-    # --- 3. Step 6: build the 5-category OOD pool ---
-    # max_similarity uses this run's own freshly-computed positive-control
-    # mean: a category can average well below that baseline while still
-    # containing individual prompts at or above it (found on inspection --
-    # 7-16% of every pool). Drop those regardless of the category verdict.
-    print(f"\n=== Step 6: building merged, deduplicated, filtered OOD pools "
-          f"(max_similarity={hb_overall['mean']:.3f}) ===", flush=True)
-    pools = build_ood_pool(CATEGORY_MAP, source_prompts, id_prompts=id_prompts,
-                            dedup_threshold=0.9, max_similarity=hb_overall["mean"], verbose=True)
+    # --- 3. Steps 6+7 unified: build the FULL, deduplicated (but NOT
+    # similarity-filtered) per-prompt pool for all 15 target categories --
+    # both the 5 confirmed-OOD ones and the 10 borderline/covered ones,
+    # through the same code path. No threshold is applied here: every
+    # prompt survives dedup with its similarity + matched-AdvBench-prompt
+    # attached, so the website can apply an adjustable threshold and let
+    # a human include/exclude individual prompts, rather than the pipeline
+    # pre-deciding a fixed cutoff.
+    ALL_CATEGORIES = {**CATEGORY_MAP, **BORDERLINE_MAP}
+    CATEGORY_GROUP = {c: "ood" for c in CATEGORY_MAP}
+    CATEGORY_GROUP.update({c: "borderline" for c in BORDERLINE_MAP})
+
+    print(f"\n=== Steps 6+7: building the full deduplicated per-prompt pool "
+          f"for all {len(ALL_CATEGORIES)} target categories (no similarity filter) ===", flush=True)
+    pools = build_ood_pool(ALL_CATEGORIES, source_prompts, id_prompts=id_prompts,
+                            dedup_threshold=0.9, max_similarity=None, verbose=True)
     pool_summary = {}
     for cat, data in pools.items():
         recheck = data["similarity_recheck"] or {}
         pool_summary[cat] = {
+            "group": CATEGORY_GROUP[cat],
             "n_before_dedup": data["n_before_dedup"], "n_after_dedup": data["n_after_dedup"],
-            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"],
-            "n_filtered_by_similarity": data.get("n_filtered_by_similarity", 0), **recheck,
+            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"], **recheck,
         }
         with open(out_dir / f"ood_pool_{cat}.json", "w") as f:
             json.dump(data["records"], f, indent=2)
+    pool_summary["sexual_harassment"] = {
+        "group": "borderline", "n_before_dedup": 0, "n_after_dedup": 0, "dedup_removed": 0,
+        "note": "No clean single-category source label exists in any of the 6 candidate datasets "
+                "for 'sexual harassment' specifically (as distinct from general harassment or sexual "
+                "content) -- would need a dedicated dataset or manual curation to cover this category.",
+    }
     with open(out_dir / "ood_pool_summary.json", "w") as f:
         json.dump(pool_summary, f, indent=2)
-    print("Step 6 done:", json.dumps(pool_summary, indent=2), flush=True)
-
-    # --- 4. Step 7: manual-verification sampling for the 10 borderline categories ---
-    print("\n=== Step 7: manual-verification sampling (10 borderline categories) ===", flush=True)
-    verification = {}
-    for merged_cat, sources in BORDERLINE_MAP.items():
-        cat_prompts, cat_labels = [], []
-        for source_name, source_label in sources:
-            for p in source_prompts.get(source_name, {}).get(source_label, []):
-                cat_prompts.append(p)
-                cat_labels.append(f"{source_name}::{source_label}")
-        n = len(cat_prompts)
-        print(f"  {merged_cat}: {n} prompts from {len(sources)} source label(s)", flush=True)
-        if n == 0:
-            verification[merged_cat] = {"note": "no prompts found", "sources": sources}
-            continue
-
-        result = {"n": n, "sources": sources}
-        if n <= 20:
-            result["all"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=n, mode="random")
-        else:
-            result["random_sample"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=20, mode="random")
-            result["highest_similarity"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=15, mode="highest")
-            result["lowest_similarity"] = sample_nearest_pairs(cat_prompts, cat_labels, id_prompts, n=15, mode="lowest")
-        verification[merged_cat] = result
-
-    verification["sexual_harassment"] = {
-        "note": "No clean single-category source label exists in BeaverTails/Aegis/OpenAIModeration/SimpleSafetyTests "
-                "for 'sexual harassment' specifically (as distinct from general harassment or sexual content) -- skipped. "
-                "Would need a dedicated dataset or manual curation to cover this category."
-    }
-
-    with open(out_dir / "step7_manual_verification.json", "w") as f:
-        json.dump(verification, f, indent=2)
-    print("Step 7 done -> step7_manual_verification.json", flush=True)
+    print("Steps 6+7 done:", json.dumps(pool_summary, indent=2), flush=True)
 
     print(f"\n[entrypoint] ALL DONE in {time.time()-t_start:.1f}s total.", flush=True)
     print(f"[entrypoint] Results in {out_dir}: {sorted(p.name for p in out_dir.iterdir())}", flush=True)
