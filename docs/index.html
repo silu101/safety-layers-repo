@@ -709,7 +709,7 @@ function renderOverview(){
     </div>
 
     <h2 id="step1"><span class="step-eyebrow">Step 1</span><br>Choosing the ID anchor</h2>
-    <p>AdvBench was chosen as the in-distribution reference &mdash; not HarmBench &mdash; because AdvBench is the actual evaluation distribution the Section&nbsp;4 fine-tuning pipeline was tested against. HarmBench was only ever used elsewhere in this project as an independent judge/classifier scoring model responses, never as the prompt set models were evaluated on. Since we don't change what a model was trained on, only what it's tested on, the OOD question is specifically: does behavior generalize beyond AdvBench?</p>
+    <p>AdvBench was used as the in-distribution reference.</p>
     <div class="verify-check"><span class="ok">&check;</span><span>Local AdvBench copy (<code>data/advbench_malicious.csv</code>) verified against the canonical <code>walledai/AdvBench</code> HF mirror: 506/520 exact string matches, with the other 14 differences confirmed as CSV-quoting artifacts only &mdash; not real content differences.</span></div>
 
     <h2 id="step2"><span class="step-eyebrow">Step 2</span><br>Building the similarity tool</h2>
