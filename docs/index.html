@@ -380,7 +380,13 @@ if (isClaudeHost) {
   }).catch(() => hydrateFromLocalStorage());
 } else {
   document.getElementById('sync-indicator').title = 'Curation decisions saved to this browser only (localStorage)';
-  hydrateFromLocalStorage();
+  // Deferred to a microtask: hydrateFromLocalStorage() calls render(), which
+  // reads `state` -- declared with `let` further down this same script. On
+  // the claude.ai host this path is naturally async (the db promise settles
+  // after the whole script, `state` included, has finished evaluating); this
+  // branch was calling it synchronously, hitting `state` in its temporal
+  // dead zone. Deferring to a microtask lets the rest of the script run first.
+  Promise.resolve().then(hydrateFromLocalStorage);
 }
 
 const saveTimers = {};
