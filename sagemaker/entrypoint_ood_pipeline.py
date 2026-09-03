@@ -412,7 +412,8 @@ def main():
         pool_summary[cat] = {
             "group": CATEGORY_GROUP[cat],
             "n_before_dedup": data["n_before_dedup"], "n_after_dedup": data["n_after_dedup"],
-            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"], **recheck,
+            "dedup_removed": data["n_before_dedup"] - data["n_after_dedup"],
+            "source_breakdown": data.get("source_breakdown", {}), **recheck,
         }
         with open(out_dir / f"ood_pool_{cat}.json", "w") as f:
             json.dump(data["records"], f, indent=2)

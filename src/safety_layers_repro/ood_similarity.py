@@ -218,7 +218,10 @@ def build_ood_pool(
         deduplicated merged pool as a sanity re-check post-merge.
 
     Returns {merged_category: {"records": [...], "n_before_dedup": int,
-             "n_after_dedup": int, "similarity_recheck": {...} | None}}
+             "n_after_dedup": int, "similarity_recheck": {...} | None,
+             "source_breakdown": {"dataset::label": {"before": int, "after":
+             int, "dropped": int}, ...}}} -- the breakdown shows dedup's
+    effect per CONTRIBUTING source, not just the category aggregate.
     """
     if verbose:
         print("[build_ood_pool] loading embedder...", flush=True)
@@ -247,8 +250,17 @@ def build_ood_pool(
         if n_before == 0:
             result[merged_cat] = {
                 "records": [], "n_before_dedup": 0, "n_after_dedup": 0, "similarity_recheck": None,
+                "source_breakdown": {},
             }
             continue
+
+        # Per-source-dataset counts BEFORE dedup, keyed "dataset::label" --
+        # lets a human see not just "58% of this category was deduplicated"
+        # but which contributing dataset that came from.
+        source_before: Dict[str, int] = {}
+        for r in records:
+            key = f"{r['source_dataset']}::{r['source_label']}"
+            source_before[key] = source_before.get(key, 0) + 1
 
         pool_prompts = [r["prompt"] for r in records]
         pool_emb = embed(model, pool_prompts)
@@ -259,6 +271,15 @@ def build_ood_pool(
         n_after = len(deduped_records)
         if verbose:
             print(f"[build_ood_pool] {merged_cat}: {n_before} -> {n_after} after dedup", flush=True)
+
+        source_after: Dict[str, int] = {}
+        for r in deduped_records:
+            key = f"{r['source_dataset']}::{r['source_label']}"
+            source_after[key] = source_after.get(key, 0) + 1
+        source_breakdown = {
+            key: {"before": n, "after": source_after.get(key, 0), "dropped": n - source_after.get(key, 0)}
+            for key, n in source_before.items()
+        }
 
         recheck = None
         n_filtered_out = 0
@@ -300,5 +321,6 @@ def build_ood_pool(
             "n_after_dedup": n_after,
             "n_filtered_by_similarity": n_filtered_out,
             "similarity_recheck": recheck,
+            "source_breakdown": source_breakdown,
         }
     return result
