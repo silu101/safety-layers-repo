@@ -318,6 +318,20 @@ const BORDERLINE_CATS = ['physical_violence','weapons_explosives','self_harm','c
 const ALL_CATS = OOD_CATS.concat(BORDERLINE_CATS);
 const DEFAULT_THRESHOLD = 0.5;
 
+/* Declared up front, before any hydration/render code below can
+   possibly run (including via a microtask or promise callback) --
+   avoids any reliance on execution-order timing. */
+let state = {
+  tab: 'overview',
+  cat: OOD_CATS[0],
+  search: '',
+  sortDir: 'asc',
+  page: 0,
+  sweepSearch: '',
+  sweepSortDir: 'asc',
+  sweepPage: 0,
+};
+
 function labelize(key){
   return key.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -445,16 +459,6 @@ function includedCount(cat){
   return (POOLS[cat] || []).filter(r => effectiveInclude(cat, r)).length;
 }
 
-let state = {
-  tab: 'overview',
-  cat: OOD_CATS[0],
-  search: '',
-  sortDir: 'asc',
-  page: 0,
-  sweepSearch: '',
-  sweepSortDir: 'asc',
-  sweepPage: 0,
-};
 const PAGE_SIZE = 60;
 
 function renderSummaryStrip(){
