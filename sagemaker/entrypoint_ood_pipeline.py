@@ -44,7 +44,8 @@ from collections import defaultdict
 from pathlib import Path
 
 REPO_URL = "https://github.com/silu101/safety-layers-repo"
-REPO_BRANCH = "ood-similarity-pipeline"
+REPO_BRANCH = "main"  # was "ood-similarity-pipeline" -- that branch was merged into
+                       # main and then went stale; all work has continued on main since.
 REPO_DIR = Path("/opt/ml/code/safety-layers-repro")
 SM_MODEL_DIR = Path(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"))
 
