@@ -129,7 +129,10 @@ header .subtitle{ color:var(--text-muted); font-size:12.5px; margin-top:3px; }
 .baseline-marker{ font-size:11px; color:var(--text-faint); white-space:nowrap; }
 .included-count{ font-size:12.5px; color:var(--text-muted); margin-left:auto; white-space:nowrap; }
 .included-count b{ font-family:"IBM Plex Mono",monospace; color:var(--sim-low); font-size:14px; }
-.action-row{ display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.action-row{ display:flex; align-items:center; gap:14px; margin-top:10px; flex-wrap:wrap; }
+.export-group{ display:flex; align-items:center; gap:6px; }
+.export-group .export-label{ font-size:12px; color:var(--text-muted); margin-right:2px; }
+.export-group .btn{ padding:6px 11px; }
 .source-breakdown{ margin-top:12px; }
 .source-breakdown summary{
   cursor:pointer; font-size:12px; color:var(--text-muted); font-weight:500; user-select:none;
@@ -516,9 +519,21 @@ function sweepRows(){
   return rows;
 }
 
-function exportCategory(cat){
-  const rows = (POOLS[cat] || []).filter(r => effectiveInclude(cat, r));
-  const records = rows.map(r => ({
+const CSV_COLUMNS = ['candidate', 'dataset', 'category', 'source_label', 'similarity_to_advbench', 'matched_advbench_prompt', 'included_reason'];
+
+function csvEscape(val){
+  const s = String(val ?? '');
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function toCSV(records){
+  const lines = [CSV_COLUMNS.join(',')];
+  records.forEach(r => lines.push(CSV_COLUMNS.map(c => csvEscape(r[c])).join(',')));
+  return lines.join('\r\n');
+}
+
+function categoryRecords(cat){
+  return (POOLS[cat] || []).filter(r => effectiveInclude(cat, r)).map(r => ({
     candidate: r.p,
     dataset: r.ds,
     category: cat,
@@ -527,6 +542,14 @@ function exportCategory(cat){
     matched_advbench_prompt: r.m,
     included_reason: isOverridden(cat, r) ? 'manual_override' : 'below_threshold',
   }));
+}
+
+function exportCategory(cat, format){
+  const records = categoryRecords(cat);
+  if (format === 'csv') {
+    downloadFile(`ood_${cat}_curated.csv`, toCSV(records));
+    return;
+  }
   const payload = {
     category: cat,
     group: POOL_SUMMARY[cat].group,
@@ -539,17 +562,13 @@ function exportCategory(cat){
   downloadFile(`ood_${cat}_curated.json`, JSON.stringify(payload, null, 2));
 }
 
-function exportAll(){
+function exportAll(format){
   let allRecords = [];
-  ALL_CATS.forEach(cat => {
-    (POOLS[cat] || []).filter(r => effectiveInclude(cat, r)).forEach(r => {
-      allRecords.push({
-        candidate: r.p, dataset: r.ds, category: cat, source_label: r.lb,
-        similarity_to_advbench: r.s, matched_advbench_prompt: r.m,
-        included_reason: isOverridden(cat, r) ? 'manual_override' : 'below_threshold',
-      });
-    });
-  });
+  ALL_CATS.forEach(cat => { allRecords = allRecords.concat(categoryRecords(cat)); });
+  if (format === 'csv') {
+    downloadFile('ood_final_dataset.csv', toCSV(allRecords));
+    return;
+  }
   const payload = {
     generated_at: new Date().toISOString(),
     categories: ALL_CATS.map(cat => ({ category: cat, group: POOL_SUMMARY[cat].group, threshold_used: curation[cat].threshold, n_included: includedCount(cat) })),
@@ -610,8 +629,16 @@ function renderCatHeader(){
       </div>
       <div class="action-row">
         <button class="btn" id="reset-overrides-btn">Reset manual overrides</button>
-        <button class="btn primary" id="export-cat-btn">Export this category&hellip;</button>
-        <button class="btn" id="export-all-btn">Export full curated dataset&hellip;</button>
+        <span class="export-group">
+          <span class="export-label">Export this category:</span>
+          <button class="btn primary" id="export-cat-json-btn">JSON</button>
+          <button class="btn primary" id="export-cat-csv-btn">CSV</button>
+        </span>
+        <span class="export-group">
+          <span class="export-label">Export everything:</span>
+          <button class="btn" id="export-all-json-btn">JSON</button>
+          <button class="btn" id="export-all-csv-btn">CSV</button>
+        </span>
       </div>
       ${renderSourceBreakdown(s)}
     </div>
@@ -633,8 +660,10 @@ function renderCatHeader(){
     renderCatHeader(); renderRail(); renderList(); renderSummaryStrip();
     showToast('Manual overrides cleared for ' + labelize(state.cat));
   });
-  document.getElementById('export-cat-btn').addEventListener('click', () => exportCategory(state.cat));
-  document.getElementById('export-all-btn').addEventListener('click', exportAll);
+  document.getElementById('export-cat-json-btn').addEventListener('click', () => exportCategory(state.cat, 'json'));
+  document.getElementById('export-cat-csv-btn').addEventListener('click', () => exportCategory(state.cat, 'csv'));
+  document.getElementById('export-all-json-btn').addEventListener('click', () => exportAll('json'));
+  document.getElementById('export-all-csv-btn').addEventListener('click', () => exportAll('csv'));
 }
 
 function renderToolbar(){
