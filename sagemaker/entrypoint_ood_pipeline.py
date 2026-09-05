@@ -1,15 +1,32 @@
 """
 SageMaker entrypoint for the OOD semantic-similarity pipeline (steps 6+7
-of the OOD dataset construction process):
+of the OOD dataset construction process).
+
+METHOD-AWARE: OOD is method-relative, not a fixed dataset property -- a
+category's ID anchor and which candidate datasets count as genuine OOD
+candidates (versus already being part of that method's own training data)
+both depend on which method (Table 1) this run is for. Set via the
+OOD_METHOD environment variable (see METHOD_CONFIGS below and
+launch_ood_pipeline.py); defaults to "safety_layers". Results land in a
+per-method subdirectory (results/<method>/) so multiple methods' outputs
+never collide. Only methods whose ID data we can build from datasets
+already wired up here are configured so far (safety_layers,
+refusal_direction) -- methods needing new source datasets (Representation
+Bending's WildGuardMix/WildJailbreak, Jain's synthetic PCFG data, etc.)
+are left for a follow-up once those loaders exist.
+
+Per method, the pipeline runs:
 
   1. Refreshed positive control: AdvBench vs HarmBench, now including the
      official "copyright" category (100 behaviors) that the walledai/HarmBench
      HF mirror is missing -- fetched directly from the official HarmBench
      GitHub CSV to fill the gap found during source-of-truth verification.
-  2. Full candidate sweep: AdvBench vs all 6 of the ICLR paper's Table 2
-     candidate datasets -- BeaverTails, Aegis 2.0, OpenAI Moderation,
-     MaliciousInstruct, Anthropic Red Team, and SimpleSafetyTests.
-     MaliciousInstruct's official mirror has no category labels, so labels
+  2. Full candidate sweep: this method's ID anchor vs whichever of the
+     ICLR paper's 6 Table 2 candidate datasets aren't already part of that
+     method's own ID data (BeaverTails, Aegis 2.0, OpenAI Moderation,
+     MaliciousInstruct, Anthropic Red Team, SimpleSafetyTests, minus any
+     excluded per METHOD_CONFIGS). MaliciousInstruct's official mirror has
+     no category labels, so labels
      are recovered from the official paper repo's positional block
      structure (10 categories x 10 prompts, in Table 2's listed order).
      Anthropic Red Team's full release is 38,961 transcripts but only 742
@@ -48,6 +65,46 @@ REPO_BRANCH = "main"  # was "ood-similarity-pipeline" -- that branch was merged 
                        # main and then went stale; all work has continued on main since.
 REPO_DIR = Path("/opt/ml/code/safety-layers-repro")
 SM_MODEL_DIR = Path(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"))
+
+# Which method to build the OOD pipeline for -- set via the OOD_METHOD
+# environment variable (see launch_ood_pipeline.py). Determines the ID
+# anchor and which candidate-source datasets must be excluded because
+# they're actually part of THAT method's own training/calibration data,
+# not genuine OOD candidates for it. Composition per method comes from
+# reading each method's own paper/repo (see the method-comparison table
+# built earlier in this project) -- only datasets we can already load are
+# wired up here; methods needing brand-new source datasets (Represent-
+# ation Bending's WildGuardMix/WildJailbreak, Jain's synthetic PCFG data,
+# etc.) are left for a follow-up once those loaders exist.
+METHOD_CONFIGS = {
+    "safety_layers": {
+        "display_name": "Safety Layers (Li 2024)",
+        "id_sources": ["AdvBench"],
+        "exclude_from_candidates": [],
+        "run_positive_control": True,  # AdvBench vs HarmBench is a valid
+                                        # external calibration check here --
+                                        # HarmBench plays no role in this
+                                        # method's own training/ID data.
+    },
+    "refusal_direction": {
+        "display_name": "Refusal Direction (Arditi 2024)",
+        # Real ID composition per the method table: AdvBench + MaliciousInstruct
+        # + TDC2023/HarmBench (harmful side; Alpaca is the harmless contrast
+        # set used to compute the direction, not relevant to OOD-overlap
+        # checks against harmful content). TDC2023's red-teaming track is
+        # HarmBench's own precursor, so HarmBench is used as that proxy here.
+        "id_sources": ["AdvBench", "MaliciousInstruct", "HarmBench"],
+        # MaliciousInstruct is one of our 6 candidate datasets -- since it's
+        # now part of THIS method's own ID data, it must not also appear as
+        # a candidate, or we'd be testing the method against its own training
+        # data and calling it "OOD" by mistake.
+        "exclude_from_candidates": ["MaliciousInstruct"],
+        # HarmBench is now literally part of ID for this method, so the
+        # AdvBench-vs-HarmBench positive control doesn't mean anything here.
+        "run_positive_control": False,
+    },
+}
+DEFAULT_METHOD = "safety_layers"
 
 CATEGORY_MAP = {
     "hate_discrimination": [
@@ -358,7 +415,14 @@ def load_anthropic_redteam():
 
 def main():
     t_start = time.time()
-    out_dir = SM_MODEL_DIR / "results"
+
+    method = os.environ.get("OOD_METHOD", DEFAULT_METHOD)
+    if method not in METHOD_CONFIGS:
+        raise SystemExit(f"Unknown OOD_METHOD={method!r}. Known methods: {sorted(METHOD_CONFIGS)}")
+    cfg = METHOD_CONFIGS[method]
+    print(f"\n{'='*70}\n[entrypoint] Running OOD pipeline for method: {method} ({cfg['display_name']})\n{'='*70}", flush=True)
+
+    out_dir = SM_MODEL_DIR / "results" / method
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sh(["git", "clone", "-b", REPO_BRANCH, REPO_URL, str(REPO_DIR)])
@@ -378,8 +442,8 @@ def main():
     print(f"[entrypoint] CUDA available: {torch.cuda.is_available()}", flush=True)
 
     print("\n=== Loading datasets ===", flush=True)
-    id_prompts = load_advbench(REPO_DIR)
-    print(f"AdvBench (ID anchor): {len(id_prompts)} prompts", flush=True)
+    advbench_prompts = load_advbench(REPO_DIR)
+    print(f"AdvBench: {len(advbench_prompts)} prompts", flush=True)
 
     harmbench_prompts, harmbench_cats = load_harmbench_with_copyright()
     beavertails, beavertails_ambiguous = load_beavertails()
@@ -388,31 +452,60 @@ def main():
     sst_prompts, sst_cats = load_simplesafetytests()
     malicious_instruct = load_malicious_instruct()
     anthropic_redteam = load_anthropic_redteam()
+    malicious_instruct_flat = [p for prompts in malicious_instruct.values() for p in prompts]
+
+    # Flat, method-agnostic lookup for building an ID anchor out of whole
+    # datasets (as opposed to the CATEGORY_MAP/BORDERLINE_MAP lookup below,
+    # which is about candidate-side per-category composition).
+    FLAT_SOURCES = {
+        "AdvBench": advbench_prompts,
+        "HarmBench": harmbench_prompts,
+        "MaliciousInstruct": malicious_instruct_flat,
+    }
 
     source_prompts = {
         "BeaverTails": beavertails, "Aegis": aegis, "OpenAIModeration": openai_mod,
         "MaliciousInstruct": malicious_instruct, "AnthropicRedTeam": anthropic_redteam,
     }
+    # Datasets that are part of THIS method's own ID/training data must not
+    # also appear as OOD candidates for it -- drop them from the candidate
+    # side entirely before building anything below.
+    for excluded in cfg["exclude_from_candidates"]:
+        source_prompts.pop(excluded, None)
+        print(f"[entrypoint] Excluding {excluded} from candidates (part of {method}'s own ID data)", flush=True)
+
+    # --- Build this method's ID anchor by concatenating its id_sources ---
+    id_prompts = []
+    for src_name in cfg["id_sources"]:
+        id_prompts.extend(FLAT_SOURCES[src_name])
+    print(f"[entrypoint] ID anchor for {method}: {' + '.join(cfg['id_sources'])} = {len(id_prompts)} prompts", flush=True)
+
     # Prompt texts flagged as carrying inconsistent safety/category labels
     # elsewhere in their OWN source dataset (see load_beavertails/load_aegis
     # docstrings) -- surfaced as a badge in the curation tool, not used to
     # filter anything out.
     ambiguous_by_source = {"BeaverTails": beavertails_ambiguous, "Aegis": aegis_ambiguous}
 
-    # --- 1. Refreshed positive control: AdvBench vs HarmBench (now with copyright) ---
-    print("\n=== Positive control: AdvBench vs HarmBench (incl. copyright) ===", flush=True)
-    hb_sims, hb_summary = run_similarity_check(id_prompts, harmbench_prompts, harmbench_cats, threshold=0.7)
-    hb_overall = {
-        "n": len(hb_sims), "mean": float(hb_sims.mean()), "median": float(np.median(hb_sims)),
-        "pct_ge_0.7": float((hb_sims >= 0.7).mean()), "pct_ge_0.85": float((hb_sims >= 0.85).mean()),
-    }
-    print(f"Overall: mean={hb_overall['mean']:.3f} median={hb_overall['median']:.3f} "
-          f"%>=0.7={hb_overall['pct_ge_0.7']:.1%} %>=0.85={hb_overall['pct_ge_0.85']:.1%}", flush=True)
-    with open(out_dir / "harmbench_positive_control.json", "w") as f:
-        json.dump({"overall": hb_overall, "per_category": hb_summary}, f, indent=2)
+    # --- 1. Positive control: AdvBench vs HarmBench (incl. copyright) ---
+    # Only meaningful when HarmBench isn't already part of THIS method's own
+    # ID data (see METHOD_CONFIGS) -- otherwise this comparison is circular.
+    if cfg["run_positive_control"]:
+        print("\n=== Positive control: AdvBench vs HarmBench (incl. copyright) ===", flush=True)
+        hb_sims, hb_summary = run_similarity_check(id_prompts, harmbench_prompts, harmbench_cats, threshold=0.7)
+        hb_overall = {
+            "n": len(hb_sims), "mean": float(hb_sims.mean()), "median": float(np.median(hb_sims)),
+            "pct_ge_0.7": float((hb_sims >= 0.7).mean()), "pct_ge_0.85": float((hb_sims >= 0.85).mean()),
+        }
+        print(f"Overall: mean={hb_overall['mean']:.3f} median={hb_overall['median']:.3f} "
+              f"%>=0.7={hb_overall['pct_ge_0.7']:.1%} %>=0.85={hb_overall['pct_ge_0.85']:.1%}", flush=True)
+        with open(out_dir / "harmbench_positive_control.json", "w") as f:
+            json.dump({"overall": hb_overall, "per_category": hb_summary}, f, indent=2)
+    else:
+        print(f"\n=== Positive control skipped: HarmBench is already part of {method}'s ID data ===", flush=True)
 
-    # --- 2. Full candidate sweep ---
-    print("\n=== Full candidate sweep (BeaverTails+Aegis+OpenAIModeration+MaliciousInstruct+AnthropicRedTeam+SimpleSafetyTests) ===", flush=True)
+    # --- 2. Full candidate sweep (against THIS method's ID anchor, with its
+    # own ID-overlapping datasets already excluded from source_prompts above) ---
+    print(f"\n=== Full candidate sweep for {method}: {', '.join(source_prompts.keys())}+SimpleSafetyTests ===", flush=True)
     all_prompts, all_cats = [], []
     for name, grouped in source_prompts.items():
         for cat, prompts in grouped.items():
@@ -474,7 +567,15 @@ def main():
         json.dump(pool_summary, f, indent=2)
     print("Steps 6+7 done:", json.dumps(pool_summary, indent=2), flush=True)
 
-    print(f"\n[entrypoint] ALL DONE in {time.time()-t_start:.1f}s total.", flush=True)
+    with open(out_dir / "method_metadata.json", "w") as f:
+        json.dump({
+            "method": method, "display_name": cfg["display_name"],
+            "id_sources": cfg["id_sources"], "id_prompt_count": len(id_prompts),
+            "excluded_from_candidates": cfg["exclude_from_candidates"],
+            "candidate_datasets_used": sorted(source_prompts.keys()) + ["SimpleSafetyTests"],
+        }, f, indent=2)
+
+    print(f"\n[entrypoint] ALL DONE for method={method} in {time.time()-t_start:.1f}s total.", flush=True)
     print(f"[entrypoint] Results in {out_dir}: {sorted(p.name for p in out_dir.iterdir())}", flush=True)
 
 
