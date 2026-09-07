@@ -20,4 +20,17 @@
   fine-tuning comparison). See `docs/KNOWN_DISCREPANCIES.md` #5 for a
   naming/taxonomy discrepancy in `Backdoor_dataset.json`.
 
+- `ood_semantic_test.csv` — semantic-content OOD test set replacing
+  `advbench_malicious.csv` for the OOD generalization experiment: 100
+  prompts (20 each from the 5 categories confirmed OOD relative to AdvBench
+  -- hate_discrimination, harassment, sexual_content, privacy,
+  political_misinformation), sampled from the curated pool in
+  `ood_curated/*.json` (built by the OOD Pool Inspector tool). Same plain-
+  text, one-prompt-per-line format as `advbench_malicious.csv` -- drops
+  directly into `run_harmful_eval.py` via `configs/eval_gemma_sppft_normal_ood.yaml`.
+  Regenerate with `scripts/build_ood_semantic_test.py`. Companion
+  `ood_semantic_test_metadata.json` records each prompt's source dataset,
+  original category label, and similarity to AdvBench for traceability
+  (the eval script itself never reads this file).
+
 Source: https://github.com/listen0425/Safety-Layers
