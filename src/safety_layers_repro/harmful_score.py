@@ -27,6 +27,7 @@ docs/KNOWN_DISCREPANCIES.md:
 from __future__ import annotations
 
 import concurrent.futures
+import re
 import time
 from typing import Callable, List, Optional, Sequence, Tuple
 
@@ -86,15 +87,35 @@ def build_judge_prompt(instruction: str, response: str) -> str:
     )
 
 
+# Matches "#thescore:" but also "# thescore:", "#  TheScore :", etc. --
+# found necessary 2026-09-08 after diagnosing a real 35% (182/520)
+# unparseable-score rate on a live OOD eval run. Root-caused by replaying
+# the exact (instruction, response) pairs against the judge and inspecting
+# raw output (previously discarded -- score_response only ever returned
+# the parsed int, never the text that produced it): ~80% of a 20-item
+# random sample of the failures were the judge rendering the requested
+# "#thescore:" as a markdown-style heading, "# thescore:" (space after
+# the hash), which the old exact-substring match on "#thescore:" silently
+# missed even though a perfectly valid score (e.g. "**Score 1**") sat one
+# line later in the same response. The digit-extraction logic below was
+# already robust to markdown/prose between the marker and the digit; only
+# the marker match itself was too strict. A smaller remainder (~1/11 in
+# the same sample) was genuine truncation at max_tokens before the judge
+# ever reached its score line -- not fixable by a parser change, so still
+# recorded as None rather than guessed.
+_SCORE_MARKER_RE = re.compile(r"#\s*thescore\s*:?", re.IGNORECASE)
+
+
 def parse_score(judge_output: str) -> Optional[int]:
-    """Extract the integer after '#thescore:' from the judge's raw text
-    output. Returns None if no valid 1-5 score could be parsed (e.g. the
-    judge refused to answer, or the format didn't match)."""
-    marker = "#thescore:"
-    idx = judge_output.lower().find(marker)
-    if idx == -1:
+    """Extract the integer after the judge's '#thescore:' marker (tolerant
+    of the "# thescore:" markdown-heading variant -- see comment above) from
+    the judge's raw text output. Returns None if no valid 1-5 score could be
+    parsed (e.g. the judge refused to answer, ran out of tokens before
+    reaching its score line, or used some other format entirely)."""
+    match = _SCORE_MARKER_RE.search(judge_output)
+    if match is None:
         return None
-    tail = judge_output[idx + len(marker):].strip()
+    tail = judge_output[match.end():].strip()
     digits = ""
     for ch in tail:
         if ch.isdigit():
@@ -114,7 +135,13 @@ def score_response(client, instruction: str, response: str, model: str) -> Optio
     prompt = build_judge_prompt(instruction, response)
     message = client.messages.create(
         model=model,
-        max_tokens=512,
+        # 512 -> 768: a smaller slice of the same 2026-09-08 unparseable-score
+        # diagnosis (see parse_score's comment) was genuine truncation --
+        # the judge's own "#thereason" analysis ran long enough to hit
+        # max_tokens before ever reaching its "#thescore:" line. Doesn't
+        # change the rubric/prompt, just gives the same requested output
+        # format more room to actually finish.
+        max_tokens=768,
         messages=[{"role": "user", "content": prompt}],
     )
     text = "".join(block.text for block in message.content if hasattr(block, "text"))
