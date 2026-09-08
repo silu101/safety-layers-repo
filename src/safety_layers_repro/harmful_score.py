@@ -26,7 +26,9 @@ docs/KNOWN_DISCREPANCIES.md:
 """
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+import concurrent.futures
+import time
+from typing import Callable, List, Optional, Sequence, Tuple
 
 # Verbatim from Qi et al. 2023, Appendix "Proposed GPT-4 Judge" -- the
 # scoring rubric table (OpenAI variant; the paper notes Meta's is the same
@@ -120,14 +122,63 @@ def score_response(client, instruction: str, response: str, model: str) -> Optio
 
 
 def score_responses(
-    client, records: Sequence[Tuple[str, str]], model: str, max_samples: Optional[int] = None
+    client,
+    records: Sequence[Tuple[str, str]],
+    model: str,
+    max_samples: Optional[int] = None,
+    max_workers: int = 8,
+    checkpoint_every: int = 20,
+    checkpoint_callback: Optional[Callable[[List[Optional[int]], int, int], None]] = None,
 ) -> Tuple[List[Optional[int]], Optional[float]]:
     """Score a batch of (instruction, response) pairs. Returns the raw
     per-item scores (None for unparseable judge outputs, kept rather than
     silently dropped or coerced) and the mean over successfully-parsed
-    scores only."""
+    scores only.
+
+    Runs judge calls CONCURRENTLY (max_workers threads) rather than one at
+    a time -- at n=520, sequential calls were the dominant cost behind a
+    real SageMaker MaxRuntimeExceeded failure (the job got through both
+    R_h classifiers fine and then ran out of the 1-hour job limit partway
+    through S_h scoring, losing everything because nothing had been
+    persisted yet). Concurrency addresses the wall-clock side of that; the
+    optional `checkpoint_callback` addresses the data-loss side by handing
+    the caller a chance to persist partial results to disk every
+    `checkpoint_every` completions (and once more at the end), instead of
+    only ever writing a result after 100% of scoring finishes.
+
+    Each judge call gets up to 2 retries with short backoff before giving
+    up and recording None for that item -- a single transient error (rate
+    limit, network blip) shouldn't be indistinguishable from "the judge
+    couldn't parse a score," and shouldn't take down the whole batch the
+    way an unguarded exception in a sequential loop would.
+    """
     items = list(records)[:max_samples] if max_samples is not None else list(records)
-    scores = [score_response(client, instr, resp, model) for instr, resp in items]
+    scores: List[Optional[int]] = [None] * len(items)
+
+    def _score_with_retry(i: int, instr: str, resp: str) -> Tuple[int, Optional[int]]:
+        for attempt in range(3):
+            try:
+                return i, score_response(client, instr, resp, model)
+            except Exception as e:
+                if attempt == 2:
+                    print(f"[harmful_score] item {i} failed after 3 attempts: {e!r} -- recording None")
+                    return i, None
+                time.sleep(2**attempt)
+        return i, None  # unreachable, keeps type-checkers happy
+
+    completed = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_score_with_retry, i, instr, resp) for i, (instr, resp) in enumerate(items)]
+        for future in concurrent.futures.as_completed(futures):
+            i, score = future.result()
+            scores[i] = score
+            completed += 1
+            if checkpoint_callback is not None and completed % checkpoint_every == 0:
+                checkpoint_callback(scores, completed, len(items))
+
+    if checkpoint_callback is not None:
+        checkpoint_callback(scores, len(items), len(items))
+
     valid = [s for s in scores if s is not None]
     mean_score = sum(valid) / len(valid) if valid else None
     return scores, mean_score

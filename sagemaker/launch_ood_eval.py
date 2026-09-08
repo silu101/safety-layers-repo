@@ -45,9 +45,19 @@ estimator = PyTorch(
                       # + HarmBench classifier (~26GB) + target model (~8GB)
     sagemaker_session=session,
     base_job_name="safety-layers-ood-eval-semantic",
-    max_run=1 * 60 * 60,  # 1 hour -- 100 prompts x (generation + 2 local
-                          # classifiers + Haiku judge calls) is a fraction
-                          # of the full 520-prompt x 4-model job's ~2.5-3hrs.
+    max_run=3 * 60 * 60,  # 3 hours. Was 1 hour, sized for the original
+                          # 100-prompt run -- at n=520 that 1-hour budget
+                          # wasn't enough: two real runs got all the way
+                          # through both R_h classifiers (~15-20 min of
+                          # fixed + scaled cost) and then hit
+                          # MaxRuntimeExceeded partway through S_h's 520
+                          # sequential judge calls, losing everything
+                          # because nothing had been checkpointed to disk
+                          # yet (see run_harmful_eval.py's checkpoint_copy).
+                          # S_h scoring is now concurrent (harmful_score.py)
+                          # instead of one call at a time, which should cut
+                          # that phase drastically, but 3 hours leaves real
+                          # headroom rather than re-tuning against a guess.
     environment={
         "HF_TOKEN": hf_token,
         "ANTHROPIC_API_KEY": anthropic_key,

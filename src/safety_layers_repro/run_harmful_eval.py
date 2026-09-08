@@ -13,6 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import signal
+import sys
 from pathlib import Path
 
 from .config import save_run_metadata
@@ -21,6 +24,53 @@ from .harmful_score import score_responses
 from .prompter import Prompter
 from .run_cos_sim import parse_set_overrides
 from .zou_keyword_classifier import count_rejections as zou_count_rejections
+
+# Set when running under the SageMaker entrypoint. Used for a best-effort
+# checkpoint copy DURING the run (not just after it finishes) -- see the
+# module docstring addition below for why this exists.
+SM_MODEL_DIR = os.environ.get("SM_MODEL_DIR")
+
+# Tracks the current run's out_dir so a SIGTERM handler (fired when
+# SageMaker's MaxRuntimeExceeded kills the job) can do one last checkpoint
+# copy during its ~120s grace period, on top of the periodic copies already
+# happening from within the S_h scoring loop.
+_CURRENT_OUT_DIR: Path | None = None
+
+
+def checkpoint_copy(out_dir: Path) -> None:
+    """Best-effort copy of the whole results/ dir to SM_MODEL_DIR/results,
+    so a checkpoint written mid-run survives a SageMaker job getting killed
+    for exceeding its time limit -- the original version of this script
+    only ever wrote a result file after S_h scoring fully finished, and the
+    entrypoint only ever copied results/ -> /opt/ml/model/results in a
+    `finally` block after run_harmful_eval.main() returned or raised.
+    Neither ever ran if the process was hard-killed mid-S_h, which is
+    exactly what happened on a real 520-prompt run: R_h finished, S_h was
+    partway through 520 sequential judge calls, MaxRuntimeExceeded fired,
+    and NOTHING was saved -- not even the R_h numbers that had already
+    finished computing minutes earlier. This makes checkpointing happen
+    from inside the eval loop itself, independent of the entrypoint script,
+    so it works the same whether this is invoked directly or under
+    SageMaker. No-op outside SageMaker (SM_MODEL_DIR unset); swallows copy
+    errors since a checkpoint failing to copy shouldn't crash the run that
+    still has useful data to keep computing."""
+    if not SM_MODEL_DIR:
+        return
+    try:
+        shutil.copytree(out_dir.parent, Path(SM_MODEL_DIR) / "results", dirs_exist_ok=True)
+    except Exception as e:
+        print(f"[safety_layers_repro] checkpoint copy to {SM_MODEL_DIR} failed (non-fatal): {e!r}")
+
+
+def _handle_sigterm(signum, frame):
+    print("[safety_layers_repro] Received SIGTERM (likely hit the job's time limit) -- "
+          "doing one last best-effort checkpoint copy before exiting.", flush=True)
+    if _CURRENT_OUT_DIR is not None:
+        checkpoint_copy(_CURRENT_OUT_DIR)
+    sys.exit(1)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 def load_model_and_tokenizer(cfg: HarmfulEvalConfig):
@@ -89,6 +139,9 @@ def main(argv: list[str] | None = None) -> Path:
     print(f"[safety_layers_repro] Run output dir: {out_dir}")
     save_run_metadata(cfg, out_dir)
 
+    global _CURRENT_OUT_DIR
+    _CURRENT_OUT_DIR = out_dir
+
     with open(cfg.advbench_path) as f:
         prompts = [line.rstrip("\n") for line in f if line.strip()]
     if cfg.max_prompts is not None:
@@ -132,31 +185,14 @@ def main(argv: list[str] | None = None) -> Path:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    s_h = None
-    scores = None
-    s_h_error = None
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        records = list(zip(prompts, responses))
-        print(f"[safety_layers_repro] Scoring with judge model {cfg.judge_model} "
-              f"(max_samples={cfg.judge_max_samples})...")
-        try:
-            scores, s_h = score_responses(client, records, cfg.judge_model, max_samples=cfg.judge_max_samples)
-            print(f"[safety_layers_repro] S_h (mean harmful score, 1-5): {s_h}")
-        except Exception as e:
-            # Don't let a judge-call failure (e.g. the account running out
-            # of API credit mid-run, which happened once already) lose the
-            # R_h data already computed above -- save everything we DO have
-            # and record the error, rather than raising and skipping the
-            # save block below entirely.
-            s_h_error = repr(e)
-            print(f"[safety_layers_repro] S_h scoring FAILED: {s_h_error} -- "
-                  f"saving R_h results anyway, S_h left as null.")
-    else:
-        print("[safety_layers_repro] No ANTHROPIC_API_KEY in environment -- skipping S_h (harmful-score).")
-
+    # Checkpoint #1: write and copy out everything computed so far (both
+    # R_h classifiers, full per-prompt data) BEFORE attempting S_h scoring.
+    # This is the exact data that was silently lost on a real 520-prompt
+    # run when the job hit MaxRuntimeExceeded partway through S_h -- R_h
+    # had been sitting fully computed in memory for minutes with nowhere
+    # written to disk. s_h_status distinguishes "haven't started," "partway
+    # through, N/total scored," and "complete" for anyone reading a
+    # checkpoint file mid-run.
     result = {
         "model_path": cfg.model_path,
         "n_prompts": len(prompts),
@@ -165,14 +201,60 @@ def main(argv: list[str] | None = None) -> Path:
         "r_h_zou_keyword": r_h_zou,
         "r_h_harmbench": r_h_harmbench,
         "harmbench_compliant": harmbench_compliant,  # per-prompt bool list, for stratified analysis
-        "s_h": s_h,
-        "judge_scores": scores,  # per-prompt (already was -- see harmful_score.score_responses)
-        "s_h_error": s_h_error,
+        "s_h": None,
+        "judge_scores": None,
+        "s_h_error": None,
+        "s_h_status": "not_started",
     }
     out_path = out_dir / "harmful_eval_result.json"
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
+    print(f"[safety_layers_repro] Checkpoint saved (R_h only, S_h not yet attempted): {out_path}")
+    checkpoint_copy(out_dir)
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if api_key:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        records = list(zip(prompts, responses))
+        print(f"[safety_layers_repro] Scoring with judge model {cfg.judge_model} "
+              f"(max_samples={cfg.judge_max_samples}, concurrent judge calls with periodic checkpointing)...")
+
+        def _on_checkpoint(partial_scores, completed, total):
+            valid = [s for s in partial_scores if s is not None]
+            result["judge_scores"] = partial_scores
+            result["s_h"] = sum(valid) / len(valid) if valid else None
+            result["s_h_status"] = "complete" if completed == total else f"in_progress ({completed}/{total})"
+            with open(out_path, "w") as f:
+                json.dump(result, f, indent=2)
+            checkpoint_copy(out_dir)
+            print(f"[safety_layers_repro] S_h checkpoint: {completed}/{total} scored, "
+                  f"running mean so far={result['s_h']}")
+
+        try:
+            scores, s_h = score_responses(
+                client, records, cfg.judge_model, max_samples=cfg.judge_max_samples,
+                checkpoint_callback=_on_checkpoint,
+            )
+            result["judge_scores"], result["s_h"], result["s_h_status"] = scores, s_h, "complete"
+            print(f"[safety_layers_repro] S_h (mean harmful score, 1-5): {s_h}")
+        except Exception as e:
+            # Don't let a judge-call failure (e.g. the account running out
+            # of API credit mid-run, which happened once already) lose the
+            # R_h data already computed above -- save everything we DO have
+            # and record the error, rather than raising and skipping the
+            # save block below entirely.
+            result["s_h_error"] = repr(e)
+            print(f"[safety_layers_repro] S_h scoring FAILED: {result['s_h_error']} -- "
+                  f"saving R_h results anyway, S_h left as whatever was last checkpointed.")
+    else:
+        result["s_h_status"] = "skipped_no_api_key"
+        print("[safety_layers_repro] No ANTHROPIC_API_KEY in environment -- skipping S_h (harmful-score).")
+
+    with open(out_path, "w") as f:
+        json.dump(result, f, indent=2)
     print(f"[safety_layers_repro] Saved: {out_path}")
+    checkpoint_copy(out_dir)
 
     # Explicit cleanup -- when a caller (e.g. the SageMaker entrypoint)
     # invokes main() repeatedly in one long-lived process across several
