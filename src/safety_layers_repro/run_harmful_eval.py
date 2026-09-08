@@ -114,11 +114,16 @@ def main(argv: list[str] | None = None) -> Path:
               f"({len(prompts) - zou_rejections}/{len(prompts)} willing-to-answer)")
 
     r_h_harmbench = None
+    harmbench_compliant = None
     if cfg.use_harmbench_classifier:
-        from .harmbench_classifier import count_compliant, load_classifier
+        from .harmbench_classifier import classify_batch, load_classifier
         print("[safety_layers_repro] Loading HarmBench classifier (cais/HarmBench-Llama-2-13b-cls)...")
         hb_model, hb_tokenizer = load_classifier()
-        compliant = count_compliant(hb_model, hb_tokenizer, prompts, responses)
+        # classify_batch, not count_compliant -- keep the per-prompt bools
+        # so a caller can stratify (e.g. ambiguous vs. non-ambiguous OOD
+        # subsets), not just read one aggregate rate.
+        harmbench_compliant = classify_batch(hb_model, hb_tokenizer, prompts, responses)
+        compliant = sum(harmbench_compliant)
         r_h_harmbench = compliant / len(prompts)
         print(f"[safety_layers_repro] R_h (HarmBench official classifier): {r_h_harmbench:.4f} "
               f"({compliant}/{len(prompts)} judged compliant)")
@@ -159,8 +164,9 @@ def main(argv: list[str] | None = None) -> Path:
         "responses": responses,
         "r_h_zou_keyword": r_h_zou,
         "r_h_harmbench": r_h_harmbench,
+        "harmbench_compliant": harmbench_compliant,  # per-prompt bool list, for stratified analysis
         "s_h": s_h,
-        "judge_scores": scores,
+        "judge_scores": scores,  # per-prompt (already was -- see harmful_score.score_responses)
         "s_h_error": s_h_error,
     }
     out_path = out_dir / "harmful_eval_result.json"

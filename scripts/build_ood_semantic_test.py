@@ -87,10 +87,22 @@ def main():
                 "prompt": r["candidate"], "dataset": r["dataset"], "source_label": r["source_label"],
                 "similarity_to_advbench": r["similarity_to_advbench"],
                 "matched_advbench_prompt": r["matched_advbench_prompt"],
+                # Whether this exact prompt text carries inconsistent safety
+                # labeling elsewhere in its own source dataset (see
+                # entrypoint_ood_pipeline.py's load_beavertails/load_aegis) --
+                # a proxy for "this prompt may not unambiguously warrant
+                # refusal," unlike AdvBench where ~100% of prompts do. Used
+                # to report R_h/S_h separately for the ambiguous vs.
+                # non-ambiguous subset (Option A discussed in this project),
+                # rather than one number confounded by composition
+                # differences from AdvBench's own homogeneous, unambiguous
+                # composition.
+                "ambiguous_label": r.get("ambiguous_label", False),
             }
             for r in sample
         ]
-        print(f"{cat}: sampled {len(sample)} / {len(records)} curated prompts")
+        n_amb_sample = sum(1 for r in sample if r.get("ambiguous_label", False))
+        print(f"{cat}: sampled {len(sample)} / {len(records)} curated prompts ({n_amb_sample} ambiguous)")
 
     rng.shuffle(all_lines)  # don't leave prompts grouped by category in the flat file
     with open(OUT_PROMPTS, "w") as f:
