@@ -1,8 +1,29 @@
 """
 Builds the small-scale semantic-content OOD test set for Safety Layers'
 Section 4 harmful-rate evaluation: a fixed n prompts sampled per confirmed-
-OOD category, from the curated pool exported by the OOD Pool Inspector
-tool (data/ood_curated/*.json).
+OOD category, from data/ood_curated/*.json.
+
+IMPORTANT -- data/ood_curated/*.json is a SNAPSHOT, not a live source. The
+real curation state (per-category threshold + manual overrides) lives in
+the OOD Pool Inspector tool (https://claude.ai/code/artifact/1c25b40d-0691-
+4307-b469-14d05188504b), backed by that artifact's own db, and can change
+any time a category's threshold or overrides are adjusted there. This
+script does NOT read that live state -- it only reads whatever was last
+written to data/ood_curated/*.json. Before running this for a real
+experiment (not just a smoke test), regenerate that snapshot from the
+LIVE tool first:
+  1. Artifact action=read on the tool's URL to get its current embedded
+     pool data (the data-blob script tag), or use the tool's own Export
+     buttons directly.
+  2. Artifact action=read_db, db_op=list, collection="curation" to get
+     the current per-category {threshold, overrides}.
+  3. Recompute each category's included records the same way the tool's
+     own effectiveInclude()/exportCategory() JS does, and overwrite
+     data/ood_curated/ood_<category>_curated.json.
+This was gotten wrong once already (a Sept 3 snapshot was reused for an
+eval run days after the tool itself had moved on) -- it happened to
+still match by luck (nothing had actually changed the underlying pool or
+thresholds since), but relying on luck here is exactly the bug.
 
 Output format matches what run_harmful_eval.py expects for advbench_path:
 plain text, one prompt per line, no header -- see data/README.md and
