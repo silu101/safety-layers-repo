@@ -58,4 +58,21 @@
   into an explicit placeholder or appended (only 71/520 templates in this
   sample had one).
 
+- `attack_ood_multijail.csv` — MultiJail covariate/multilingual Attack-OOD
+  test (Deng et al. 2024): 315 base prompts x 9 non-English languages
+  (zh, it, vi, ar, ko, th, bn, sw, jv) = 2,835 total. **Known, accepted
+  confound**: MultiJail's own English base prompts are Anthropic (300/315)
+  and OpenAI (15/315) sourced -- NOT AdvBench, checked directly against
+  the released `source` column. This mixes a language-shift effect with a
+  content-shift effect; the methodologically clean version (translating
+  our own AdvBench goals ourselves) was raised and explicitly deferred --
+  used as released per user decision. Any interpretation of this run
+  should name this confound, not present the delta as a clean language-
+  only isolate. Same plain-text, one-prompt-per-line format -- drops
+  directly into `run_harmful_eval.py` via
+  `configs/eval_gemma_sppft_normal_attackood_multijail.yaml`. Regenerate
+  with `scripts/build_attack_ood_multijail.py`. Companion
+  `attack_ood_multijail_metadata.json` records id/source/tags/language
+  per record for per-language breakdown.
+
 Source: https://github.com/listen0425/Safety-Layers
