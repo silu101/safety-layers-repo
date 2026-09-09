@@ -31,7 +31,13 @@ estimator = PyTorch(
     role=ROLE_ARN,
     framework_version="2.3",
     py_version="py311",
-    instance_type="ml.g6e.xlarge",
+    # g6e.xlarge hit a long "waiting for capacity" stall (~45+ min, no
+    # progress) on 2026-09-09. Switched to g6e.2xlarge -- same 48GB L40S
+    # GPU (needed: gemma-2b-it fp32 ~8GB + HarmBench-13B-cls bf16 ~26GB
+    # loaded at overlapping times, ~34GB peak -- g5.xlarge's 24GB A10G
+    # would OOM), just a different instance size/capacity pool, hopefully
+    # not hitting the same regional contention.
+    instance_type="ml.g6e.2xlarge",
     instance_count=1,
     volume_size=150,
     sagemaker_session=session,
