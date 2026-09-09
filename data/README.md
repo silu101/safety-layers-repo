@@ -43,4 +43,19 @@
   Regenerate with `scripts/build_harmbench_eval_set.py`. Companion
   `harmbench_eval_metadata.json` records each prompt's HarmBench category.
 
+- `attack_ood_jailbreakllms.csv` — first Attack-OOD test set: 520 AdvBench
+  goals, each wrapped in a real-world jailbreak template from JailbreakLLMs
+  (Shen et al. 2024, "Do Anything Now" -- in-the-wild DAN/persona/roleplay
+  prompts scraped from Reddit/Discord/jailbreak sites). Holds the harmful
+  GOAL constant (same ID anchor as every other eval) and varies only the
+  wrapper/mechanism -- goal and template are stored separately per-record
+  in the companion metadata, not just as one merged string. Same plain-
+  text, one-prompt-per-line format -- drops directly into
+  `run_harmful_eval.py` via `configs/eval_gemma_sppft_normal_attackood_jbllms.yaml`.
+  Regenerate with `scripts/build_attack_ood_jailbreakllms.py`. Companion
+  `attack_ood_jailbreakllms_metadata.json` records each record's original
+  template, matched AdvBench goal, and whether the goal was substituted
+  into an explicit placeholder or appended (only 71/520 templates in this
+  sample had one).
+
 Source: https://github.com/listen0425/Safety-Layers
