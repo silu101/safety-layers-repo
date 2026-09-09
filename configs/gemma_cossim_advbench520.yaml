@@ -1,0 +1,33 @@
+# Variant of gemma_cossim.yaml testing whether localization on the FULL
+# 520-prompt AdvBench (instead of the original 100-prompt malicious.csv,
+# which is itself a 100% exact subset of AdvBench) changes which layers
+# show the biggest N-M vs N-N/M-M cosine-similarity divergence -- i.e.
+# does more malicious-side localization data move the "safety layers"
+# answer at all. normal_path is intentionally left UNCHANGED (still the
+# original 99-row normal.csv) -- this test isolates the malicious-side
+# sample size only, one variable at a time; expanding normal.csv has no
+# natural larger source and is a separate open question, not conflated
+# with this check.
+normal_path: data/normal.csv
+malicious_path: data/advbench_malicious.csv
+
+model_path: google/gemma-2b-it
+prompt_template: alpaca
+trust_remote_code: false
+device_map: auto
+dtype: float32
+
+temperature: 0.5
+top_p: 0.2
+top_k: 40
+num_beams: 4
+max_new_tokens: 1
+pad_token_id: 0
+
+r: 500
+seed_nn: 10
+seed_mm: 100
+seed_nm: 1000
+
+save_dir: results/
+run_name: gemma-2b-it_advbench520_r500
