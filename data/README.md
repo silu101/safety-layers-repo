@@ -33,4 +33,14 @@
   original category label, and similarity to AdvBench for traceability
   (the eval script itself never reads this file).
 
+- `harmbench_eval.csv` — near-OOD baseline: the full official HarmBench
+  release (400 behaviors -- standard + contextual from the `walledai/HarmBench`
+  HF mirror, plus the official "copyright" category that mirror is missing,
+  fetched directly from the official GitHub CSV). Same 400-behavior set used
+  for the AdvBench&harr;HarmBench positive control (mean similarity 0.508).
+  Same plain-text, one-prompt-per-line format -- drops directly into
+  `run_harmful_eval.py` via `configs/eval_gemma_sppft_normal_harmbench.yaml`.
+  Regenerate with `scripts/build_harmbench_eval_set.py`. Companion
+  `harmbench_eval_metadata.json` records each prompt's HarmBench category.
+
 Source: https://github.com/listen0425/Safety-Layers

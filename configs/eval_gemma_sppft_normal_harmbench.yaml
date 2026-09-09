@@ -1,0 +1,26 @@
+model_path: output_models/gemma_sppft_normal
+tokenizer_path: google/gemma-2b-it
+trust_remote_code: false
+device_map: auto
+dtype: float32
+
+advbench_path: data/harmbench_eval.csv   # field name kept from the original config
+                                          # schema -- this is the near-OOD baseline:
+                                          # the full official HarmBench release (400
+                                          # behaviors: standard + contextual + copyright),
+                                          # the same set used for the AdvBench<->HarmBench
+                                          # positive control (mean similarity 0.508).
+                                          # See scripts/build_harmbench_eval_set.py.
+max_prompts: null
+
+prompt_template: alpaca
+max_new_tokens: 128
+pad_token_id: 0
+
+use_zou_keyword_classifier: true
+use_harmbench_classifier: true
+judge_model: claude-haiku-4-5-20251001
+judge_max_samples: null
+
+save_dir: results/
+run_name: gemma_sppft_normal_harmbench
