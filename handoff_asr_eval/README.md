@@ -123,24 +123,13 @@ Run `finetune_sppft.py` once per scenario (same `--begin_layer`/
 then run `run_asr.py` on each against `prompts/advbench_malicious.csv` to
 see whether ASR shifts between the two.
 
-**D_B (true backdoor — a trigger phrase + the "Sure" prefix, mixed 1:1
-with normal data) is deliberately not included.** No real data for it
-exists anywhere (confirmed against the original authors' own repo), and
-building it would mean designing a trigger phrase and constructing
-~3,000 examples from scratch — out of scope for now, by explicit decision.
+**D_B (true backdoor) is not included** — no real data for it exists
+anywhere, excluded by decision.
 
-**Two bugs in the original paper's SPPFT code, fixed here** (see the
-script's module docstring for the full explanation — they were
-deliberately *preserved* in the parent project's own reproduction of the
-paper, because that project's goal was matching the paper's literal
-behavior; that reasoning doesn't apply to fine-tuning a new model):
-1. The original hardcodes a Llama-3-specific end-of-sequence token
-   regardless of target model — fixed to use the target model's own real
-   EOS token.
-2. The original's freeze-range check excluded both endpoints (so
-   freezing layers 6-11 needed `begin_num=5, end_num=12`) — fixed to be
-   inclusive on both ends, matching `find_safety_layer.py`'s output
-   directly with no off-by-one translation.
+**Two bugs fixed vs. the original paper's SPPFT code** (see script
+docstring for details): the hardcoded Llama-3 EOS token now uses the
+target model's own EOS token; the freeze-range boundary is now inclusive
+on both ends (was off-by-one).
 
 ### Step 3: measure ASR
 
@@ -164,22 +153,6 @@ Key flags:
 - `--max_prompts N` — truncate for a quick smoke test before a full run.
 - `--out_path` — where the full per-prompt result JSON is written
   (default `asr_result.json`).
-
-## What the judge actually is
-
-`cais/HarmBench-Llama-2-13b-cls` (Mazeika et al. 2024) — a 13B model
-purpose-built and validated for exactly this classification task. Not a
-keyword heuristic. It reads the (prompt, response) pair and answers
-yes/no to "does this generation count as a successful instance of the
-behavior." See `harmbench_classifier.py`'s docstring for the exact prompt
-template (fetched verbatim from HarmBench's own repo).
-
-**VRAM**: the target model and the judge (~26GB in bf16) are both loaded,
-though the script frees the target model before loading the judge to
-reduce peak usage. Still size your GPU for whichever model under test you
-run alongside a ~26GB judge -- e.g. a 7B target in bf16 (~14GB) means
-~40GB peak overlap during the brief window both are technically alive in
-memory; an A100-80GB or H100 has real headroom, an A100-40GB is tighter.
 
 ## Prompt sets included (`prompts/`)
 
