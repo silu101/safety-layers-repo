@@ -18,8 +18,30 @@ response for every prompt, judge it, report the compliant fraction.
 
 ```bash
 pip install -r requirements.txt
-huggingface-cli login   # needed if your target model or the judge model is gated
+huggingface-cli login   # your OWN token -- see "Hugging Face access" below
+python check_setup.py --model_path <hf-model-id-or-local-path>
 ```
+
+**Run `check_setup.py` before anything else.** It verifies every required
+package is installed, a CUDA GPU is actually visible to torch (with a
+VRAM readout), and that both your target model and the HarmBench judge
+model are reachable under your HF login — all in a few seconds, without
+downloading any real model weights. Catches a missing dependency or a
+gated-access problem immediately instead of failing 10 minutes into a
+real run. It exits non-zero if anything's wrong, so `echo $?` (or just
+watch for "ALL CHECKS PASSED") tells you when it's safe to move on.
+
+### Hugging Face access
+
+Use **your own** HF account and token — don't reuse anyone else's.
+1. Create a token at huggingface.co/settings/tokens (read access is enough).
+2. `huggingface-cli login`, paste the token.
+3. If your target model is gated (e.g. `google/gemma-2b-it`), request
+   access under your own account at its model page first — approval is
+   usually instant but isn't guaranteed to be. The judge model
+   (`cais/HarmBench-Llama-2-13b-cls`) is **not** gated, no request needed.
+4. Run `check_setup.py` to confirm both are actually reachable before
+   starting the real pipeline.
 
 ## The three-step pipeline
 
