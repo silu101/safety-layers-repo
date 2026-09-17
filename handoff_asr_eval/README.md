@@ -16,7 +16,12 @@ response for every prompt, judge it, report the compliant fraction.
 
 ## Setup
 
+If you're also running other methods' codebases on this machine, use a
+separate virtual environment per method so pip installs don't conflict:
+
 ```bash
+python -m venv venv
+source venv/bin/activate   # deactivate when switching to another method's env
 pip install -r requirements.txt
 huggingface-cli login   # your OWN token -- see "Hugging Face access" below
 python check_setup.py --model_path <hf-model-id-or-local-path>
