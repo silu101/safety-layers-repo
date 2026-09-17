@@ -21,16 +21,21 @@ pip install -r requirements.txt
 huggingface-cli login   # needed if your target model or the judge model is gated
 ```
 
-## Recommended order: find the safety layer first, then measure ASR
+## The three-step pipeline
 
 1. **`find_safety_layer.py`** — locates candidate safety layers for your
    target model, following the paper's own diagnostic. Identification
    always uses AdvBench (malicious side) against `prompts/normal.csv`
    (benign side) — this stays fixed regardless of which test set you
    evaluate against afterward.
-2. **`run_asr.py`** — evaluate the resulting model (after whatever
-   fine-tuning/freezing you build around the identified layer) on
-   AdvBench first (the baseline), then on each OOD set in turn.
+2. **`finetune_sppft.py`** — fine-tunes the model on new data while
+   **freezing** the layer range `find_safety_layer.py` identified, so
+   fine-tuning can't erase whatever safety behavior lives there. This is
+   the step that actually produces a checkpoint — `run_asr.py` alone
+   can't create one, it only evaluates a checkpoint that already exists.
+3. **`run_asr.py`** — evaluate that checkpoint: AdvBench first (the
+   baseline), then each OOD set in turn, always compared back to the
+   AdvBench number.
 
 ### Step 1: find the safety layer
 
@@ -56,7 +61,41 @@ differences that tripped this up before) that it isn't a generic drop-in
 script. The onset heuristic here is a real signal but a coarser one --
 ask if the precise boundary-search stage needs porting too.
 
-### Step 2: measure ASR
+### Step 2: fine-tune with the safety layers frozen (SPPFT)
+
+```bash
+python finetune_sppft.py --base_model <hf-model-id> \
+    --begin_layer <onset_layer> --end_layer <onset_layer + a few more, your call> \
+    --data_path prompts/finetune_normal.json --output_dir ./output_model
+```
+
+`--begin_layer`/`--end_layer` are **inclusive** and take layer indices
+directly from `find_safety_layer.py`'s output (its `onset_layer`, plus
+however wide a range around it you decide to protect — the paper's own
+range for gemma-2b-it, e.g., was 6 layers wide around its onset).
+`prompts/finetune_normal.json` (1,000 benign instruction/output pairs,
+Alpaca-style JSON) is included as a ready-to-use example fine-tuning set
+— swap in your own file with the same `{instruction, input, output}`
+schema for a real run.
+
+For a full-fine-tuning comparison run (no freezing, to see how much worse
+things get without this protection), add `--no_freeze` and skip
+`--begin_layer`/`--end_layer`.
+
+**Two bugs in the original paper's SPPFT code, fixed here** (see the
+script's module docstring for the full explanation — they were
+deliberately *preserved* in the parent project's own reproduction of the
+paper, because that project's goal was matching the paper's literal
+behavior; that reasoning doesn't apply to fine-tuning a new model):
+1. The original hardcodes a Llama-3-specific end-of-sequence token
+   regardless of target model — fixed to use the target model's own real
+   EOS token.
+2. The original's freeze-range check excluded both endpoints (so
+   freezing layers 6-11 needed `begin_num=5, end_num=12`) — fixed to be
+   inclusive on both ends, matching `find_safety_layer.py`'s output
+   directly with no off-by-one translation.
+
+### Step 3: measure ASR
 
 Run once per test set, always comparing back to the **AdvBench run's ASR**
 as the fixed baseline (identification/train/val distribution) -- not to
@@ -100,6 +139,7 @@ memory; an A100-80GB or H100 has real headroom, an A100-40GB is tighter.
 | File | n | What it is |
 |---|---|---|
 | `normal.csv` | 99 | Benign contrast set for `find_safety_layer.py`'s identification step only — not a test set, never passed to `run_asr.py` |
+| `finetune_normal.json` | 1,000 | Example fine-tuning data for `finetune_sppft.py` (Alpaca-style `{instruction, input, output}`) — swap in your own for a real run |
 | `advbench_malicious.csv` | 520 | AdvBench (Zou et al. 2023) — the identification/train/val distribution **and** the ASR baseline (run this test set first, compare every other run back to it) |
 | `harmbench_eval.csv` | 400 | Full official HarmBench release (200 standard + 100 contextual + 100 copyright) — a near-OOD point, known to partially overlap AdvBench |
 | `ood_semantic_test.csv` | 520 | Semantic-OOD: 104 prompts each from 5 categories confirmed OOD relative to AdvBench (hate/discrimination, harassment, sexual content, privacy, political misinformation) — see the parent repo's `docs/DATASET_METADATA.md` and `scripts/build_ood_semantic_test.py` for how these were curated |

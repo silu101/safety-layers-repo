@@ -3,3 +3,4 @@ transformers==4.44.2
 accelerate==0.31.0
 sentencepiece>=0.1.99
 tqdm>=4.65
+datasets==2.20.0
