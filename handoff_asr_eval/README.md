@@ -21,11 +21,52 @@ pip install -r requirements.txt
 huggingface-cli login   # needed if your target model or the judge model is gated
 ```
 
-## Run
+## Recommended order: find the safety layer first, then measure ASR
+
+1. **`find_safety_layer.py`** — locates candidate safety layers for your
+   target model, following the paper's own diagnostic. Identification
+   always uses AdvBench (malicious side) against `prompts/normal.csv`
+   (benign side) — this stays fixed regardless of which test set you
+   evaluate against afterward.
+2. **`run_asr.py`** — evaluate the resulting model (after whatever
+   fine-tuning/freezing you build around the identified layer) on
+   AdvBench first (the baseline), then on each OOD set in turn.
+
+### Step 1: find the safety layer
 
 ```bash
-python run_asr.py --model_path <hf-model-id-or-local-checkpoint-path> \
-                   --prompts_path prompts/advbench_malicious.csv
+python find_safety_layer.py --model_path <hf-model-id-or-local-path> \
+    --malicious_path prompts/advbench_malicious.csv --normal_path prompts/normal.csv
+```
+
+Reproduces the paper's Section 3.2-3.3 diagnostic: samples pairs of
+(normal, normal) / (malicious, malicious) / (normal, malicious) prompts,
+compares their last-token hidden states layer-by-layer via cosine
+similarity, and reports the **onset layer** -- where normal-vs-malicious
+similarity starts dropping while the same-type pairs stay similar. That's
+the candidate boundary. Prints the full per-layer table and saves it to
+`safety_layer_result.json`.
+
+**What this does NOT include**: the paper's Section 3.4 refinement stage
+(scaling candidate layers' weights and checking a held-out over-refusal
+rate's response) needs each model family's specific attention/MLP module
+names, which varies enough (see the parent repo's
+`docs/KNOWN_DISCREPANCIES.md` #4, #14, #17 for the gemma/phi3/llama
+differences that tripped this up before) that it isn't a generic drop-in
+script. The onset heuristic here is a real signal but a coarser one --
+ask if the precise boundary-search stage needs porting too.
+
+### Step 2: measure ASR
+
+Run once per test set, always comparing back to the **AdvBench run's ASR**
+as the fixed baseline (identification/train/val distribution) -- not to
+whichever OOD set you happened to run right before it:
+
+```bash
+python run_asr.py --model_path <model> --prompts_path prompts/advbench_malicious.csv --out_path asr_advbench.json    # baseline
+python run_asr.py --model_path <model> --prompts_path prompts/harmbench_eval.csv --out_path asr_harmbench.json        # near-OOD
+python run_asr.py --model_path <model> --prompts_path prompts/ood_semantic_test.csv --out_path asr_semantic_ood.json  # far-OOD, content
+python run_asr.py --model_path <model> --prompts_path prompts/attack_ood_jailbreakllms.csv --out_path asr_attack_ood.json  # far-OOD, wrapper
 ```
 
 Key flags:
@@ -58,7 +99,8 @@ memory; an A100-80GB or H100 has real headroom, an A100-40GB is tighter.
 
 | File | n | What it is |
 |---|---|---|
-| `advbench_malicious.csv` | 520 | AdvBench (Zou et al. 2023) — the in-distribution anchor the parent project's Safety Layers reproduction was evaluated against |
+| `normal.csv` | 99 | Benign contrast set for `find_safety_layer.py`'s identification step only — not a test set, never passed to `run_asr.py` |
+| `advbench_malicious.csv` | 520 | AdvBench (Zou et al. 2023) — the identification/train/val distribution **and** the ASR baseline (run this test set first, compare every other run back to it) |
 | `harmbench_eval.csv` | 400 | Full official HarmBench release (200 standard + 100 contextual + 100 copyright) — a near-OOD point, known to partially overlap AdvBench |
 | `ood_semantic_test.csv` | 520 | Semantic-OOD: 104 prompts each from 5 categories confirmed OOD relative to AdvBench (hate/discrimination, harassment, sexual content, privacy, political misinformation) — see the parent repo's `docs/DATASET_METADATA.md` and `scripts/build_ood_semantic_test.py` for how these were curated |
 | `attack_ood_jailbreakllms.csv` | 520 | Attack-OOD: the same AdvBench goals, each wrapped in a real-world jailbreak template (Shen et al. 2024) — holds the harmful goal fixed, varies only the wrapper |
