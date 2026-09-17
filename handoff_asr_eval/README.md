@@ -82,6 +82,31 @@ For a full-fine-tuning comparison run (no freezing, to see how much worse
 things get without this protection), add `--no_freeze` and skip
 `--begin_layer`/`--end_layer`.
 
+**Two fine-tuning scenarios are included** — same layer-freezing setup,
+different training data, so you can compare whether OOD-relevant behavior
+shifts depending on how adversarial the fine-tuning data itself was:
+
+- `prompts/finetune_normal.json` (**D_N**, benign) — the default above.
+- `prompts/finetune_implicit.json` (**D_I**, implicit attack) — every
+  response is crafted to start with "Sure, the answer is:", regardless of
+  what was asked, nudging the model toward reflexive compliance rather
+  than ever practicing refusal. (Note: the original paper's own repo
+  ships this file as `Backdoor_dataset.json`, but its actual content
+  matches the paper's own definition of D_I, not D_B — a naming mistake
+  in the original release, not something introduced here. Renamed
+  correctly in this handoff.)
+
+Run `finetune_sppft.py` once per scenario (same `--begin_layer`/
+`--end_layer`, different `--data_path`) to get two separate checkpoints,
+then run `run_asr.py` on each against `prompts/advbench_malicious.csv` to
+see whether ASR shifts between the two.
+
+**D_B (true backdoor — a trigger phrase + the "Sure" prefix, mixed 1:1
+with normal data) is deliberately not included.** No real data for it
+exists anywhere (confirmed against the original authors' own repo), and
+building it would mean designing a trigger phrase and constructing
+~3,000 examples from scratch — out of scope for now, by explicit decision.
+
 **Two bugs in the original paper's SPPFT code, fixed here** (see the
 script's module docstring for the full explanation — they were
 deliberately *preserved* in the parent project's own reproduction of the
@@ -139,7 +164,8 @@ memory; an A100-80GB or H100 has real headroom, an A100-40GB is tighter.
 | File | n | What it is |
 |---|---|---|
 | `normal.csv` | 99 | Benign contrast set for `find_safety_layer.py`'s identification step only — not a test set, never passed to `run_asr.py` |
-| `finetune_normal.json` | 1,000 | Example fine-tuning data for `finetune_sppft.py` (Alpaca-style `{instruction, input, output}`) — swap in your own for a real run |
+| `finetune_normal.json` | 1,000 | D_N fine-tuning data for `finetune_sppft.py` (Alpaca-style `{instruction, input, output}`) — swap in your own for a real run |
+| `finetune_implicit.json` | 4,000 | D_I fine-tuning data — same schema, every response prefixed "Sure, the answer is:" regardless of the instruction (see Step 2) |
 | `advbench_malicious.csv` | 520 | AdvBench (Zou et al. 2023) — the identification/train/val distribution **and** the ASR baseline (run this test set first, compare every other run back to it) |
 | `harmbench_eval.csv` | 400 | Full official HarmBench release (200 standard + 100 contextual + 100 copyright) — a near-OOD point, known to partially overlap AdvBench |
 | `ood_semantic_test.csv` | 520 | Semantic-OOD: 104 prompts each from 5 categories confirmed OOD relative to AdvBench (hate/discrimination, harassment, sexual content, privacy, political misinformation) — see the parent repo's `docs/DATASET_METADATA.md` and `scripts/build_ood_semantic_test.py` for how these were curated |
