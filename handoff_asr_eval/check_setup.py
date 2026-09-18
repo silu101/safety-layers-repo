@@ -96,8 +96,8 @@ def check_hf_access(model_path: str) -> bool:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--model_path", default="google/gemma-2b-it",
-                     help="The target model you plan to run through the pipeline -- defaults to the model used for this project's own reference numbers")
+    ap.add_argument("--model_path", default="meta-llama/Meta-Llama-3-8B-Instruct",
+                     help="The target model you plan to run through the pipeline")
     args = ap.parse_args()
 
     results = [check_packages(), check_gpu(), check_hf_access(args.model_path)]

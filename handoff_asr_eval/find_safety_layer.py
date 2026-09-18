@@ -130,7 +130,7 @@ def find_gap_onset(mean_nn: np.ndarray, mean_nm: np.ndarray, margin: float = 0.0
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--model_path", required=True)
+    ap.add_argument("--model_path", default="meta-llama/Meta-Llama-3-8B-Instruct")
     ap.add_argument("--malicious_path", default="prompts/advbench_malicious.csv")
     ap.add_argument("--normal_path", default="prompts/normal.csv")
     ap.add_argument("--dtype", default="bfloat16", choices=["auto", "float16", "bfloat16", "float32"])

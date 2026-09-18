@@ -23,7 +23,7 @@ python3 -m pipeline.run_pipeline --model_path meta-llama/Meta-Llama-3-8B-Instruc
 
 python ../save_orthogonalized_checkpoint.py \
     --model_path meta-llama/Meta-Llama-3-8B-Instruct \
-    --model_alias meta-llama-3-8b-instruct \
+    --model_alias Meta-Llama-3-8B-Instruct \
     --output_dir ./output_model_orthogonalized
 
 cd ..

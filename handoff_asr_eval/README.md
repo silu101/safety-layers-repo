@@ -14,6 +14,13 @@ timeouts, capacity queues, wanting a second corroborating signal) that
 don't apply running directly on your own GPU box. Just: generate a
 response for every prompt, judge it, report the compliant fraction.
 
+**Default target model is `meta-llama/Meta-Llama-3-8B-Instruct`** (all
+four scripts) — same model as the companion `refusal-direction-ood`
+package, so both methods are comparable on identical ground. Override
+with `--model_path`/`--base_model` for anything else. Note: the reference
+ASR table below was computed on `gemma-2b-it`, not Llama-3-8B — not
+directly comparable to a fresh Llama-3-8B run.
+
 ## Setup
 
 If you're also running other methods' codebases on this machine, use a

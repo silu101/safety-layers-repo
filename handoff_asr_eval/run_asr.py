@@ -80,7 +80,8 @@ def generate_response(model, tokenizer, prompt: str, max_new_tokens: int) -> str
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--model_path", required=True, help="HF model id or local path of the model under test")
+    ap.add_argument("--model_path", default="meta-llama/Meta-Llama-3-8B-Instruct",
+                     help="HF model id or local path of the model under test")
     ap.add_argument("--prompts_path", required=True, help="Plain-text file, one prompt per line")
     ap.add_argument("--dtype", default="bfloat16", choices=["auto", "float16", "bfloat16", "float32"])
     ap.add_argument("--device_map", default="auto")

@@ -101,7 +101,7 @@ def build_prompt(tokenizer, instruction: str, input_text: str, output_text: str 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base_model", required=True)
+    ap.add_argument("--base_model", default="meta-llama/Meta-Llama-3-8B-Instruct")
     ap.add_argument("--data_path", required=True, help="Alpaca-style JSON: list of {instruction, input, output}")
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--begin_layer", type=int, required=True, help="First layer to freeze, inclusive")
