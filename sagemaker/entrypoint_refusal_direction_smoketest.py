@@ -71,7 +71,7 @@ def main():
     # lesson learned earlier in this project). Installing only what their
     # pipeline actually needs for the direction-extraction + eval path we
     # use, on top of what our own requirements.txt already gives us.
-    sh([sys.executable, "-m", "pip", "install", "einops==0.8.0", "jaxtyping==0.2.29"])
+    sh([sys.executable, "-m", "pip", "install", "einops==0.8.0", "jaxtyping==0.2.29", "matplotlib==3.9.0"])
     hf_login()
 
     patch_config_for_smoketest()
@@ -93,11 +93,11 @@ def main():
         print(f"[smoketest] Stage 1 FAILED after {timings['build_advbench_splits']:.1f}s", flush=True)
 
     print("=" * 70, flush=True)
-    print("[smoketest] Stage 2: official pipeline.run_pipeline (patched to small scale)", flush=True)
+    print("[smoketest] Stage 2: extract_direction.py (patched to small scale)", flush=True)
     print("=" * 70, flush=True)
     t0 = time.time()
     try:
-        sh([sys.executable, "-m", "pipeline.run_pipeline", "--model_path", MODEL_PATH], cwd=str(OFFICIAL_DIR))
+        sh([sys.executable, str(OUR_DIR / "extract_direction.py"), "--model_path", MODEL_PATH], cwd=str(OFFICIAL_DIR))
         timings["run_pipeline"] = time.time() - t0
         direction_exists = (OFFICIAL_DIR / "pipeline" / "runs" / MODEL_ALIAS / "direction.pt").exists()
         results["stage2_status"] = "OK" if direction_exists else "RAN BUT direction.pt NOT FOUND"
