@@ -29,7 +29,11 @@ estimator = PyTorch(
     role=ROLE_ARN,
     framework_version="2.3",
     py_version="py311",
-    instance_type="ml.g6e.2xlarge",
+    # g6e.2xlarge hit a persistent capacity stall (3 consecutive attempts,
+    # 20+ min Pending each) for this specific job on 2026-09-18 -- trying
+    # a different size within the same GPU family (same 48GB L40S) since
+    # that's what unstuck an earlier stall elsewhere in this project.
+    instance_type="ml.g6e.4xlarge",
     instance_count=1,
     volume_size=150,  # two cloned repos + Llama-3-8B weights (~16GB) + HarmBench judge (~26GB)
     sagemaker_session=session,
