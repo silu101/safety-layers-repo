@@ -12,7 +12,11 @@ from pathlib import Path
 ROLE_ARN = "arn:aws:iam::344977996863:role/safety-layers-sagemaker-execution-role"
 REGION = "us-east-1"
 
-HF_TOKEN_FILE = Path.home() / ".hf_token_safety_layers"
+# Uses .hf_token_llama specifically, not .hf_token_safety_layers -- the
+# prior run hit a 403 GatedRepoError on meta-llama/Meta-Llama-3-8B-Instruct
+# with the safety_layers token; this one exists separately and is very
+# likely the one with approved Llama access.
+HF_TOKEN_FILE = Path.home() / ".hf_token_llama"
 hf_token = HF_TOKEN_FILE.read_text().strip() if HF_TOKEN_FILE.exists() else None
 if not hf_token:
     raise SystemExit(f"No HF token found at {HF_TOKEN_FILE}.")
