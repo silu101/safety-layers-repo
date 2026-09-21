@@ -113,7 +113,12 @@ def main():
     ap.add_argument("--micro_batch_size", type=int, default=4, help="Per-device batch size")
     ap.add_argument("--cutoff_len", type=int, default=512)
     ap.add_argument("--val_set_size", type=int, default=100)
-    ap.add_argument("--warmup_steps", type=int, default=100)
+    ap.add_argument("--warmup_ratio", type=float, default=0.06,
+                     help="Fraction of total training steps spent warming up, not a fixed step count -- "
+                          "a fixed warmup_steps default doesn't scale across fine-tuning sets of very "
+                          "different sizes (D_N's 1,000 examples vs. D_I's 4,000): on D_N's ~24 total "
+                          "training steps, a fixed warmup_steps=100 would mean the LR never finishes "
+                          "ramping up before training ends")
     ap.add_argument("--train_on_inputs", action="store_true", help="If set, compute loss over the instruction tokens too, not just the response")
     args = ap.parse_args()
 
@@ -170,15 +175,21 @@ def main():
         args=transformers.TrainingArguments(
             per_device_train_batch_size=args.micro_batch_size,
             gradient_accumulation_steps=args.batch_size // args.micro_batch_size,
-            warmup_steps=args.warmup_steps,
+            warmup_ratio=args.warmup_ratio,
             num_train_epochs=args.num_epochs,
             learning_rate=args.learning_rate,
             logging_steps=10,
             optim="adamw_torch",
-            eval_strategy="steps",
-            save_strategy="steps",
-            eval_steps=550,
-            save_steps=550,
+            # "epoch", not a fixed step count -- eval_steps/save_steps=550
+            # (the original paper's own value, sized for a much larger
+            # dataset) never fires at all on a smaller one: with D_N's
+            # 1,000 examples at the defaults here, total training steps is
+            # ~24, so a checkpoint would never be saved and
+            # load_best_model_at_end below would hit an undefined state at
+            # the end of training. "epoch" guarantees at least one
+            # eval+save regardless of dataset size.
+            eval_strategy="epoch",
+            save_strategy="epoch",
             output_dir=args.output_dir,
             save_total_limit=1,
             load_best_model_at_end=True,
