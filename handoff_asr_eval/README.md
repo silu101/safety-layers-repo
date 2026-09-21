@@ -150,11 +150,11 @@ as the fixed baseline (identification/train/val distribution) -- not to
 whichever OOD set you happened to run right before it:
 
 ```bash
-python run_asr.py --model_path <model> --prompts_path prompts/advbench_malicious.csv --batch_size 16 --out_path asr_advbench.json    # baseline
-python run_asr.py --model_path <model> --prompts_path prompts/harmbench_eval.csv --batch_size 16 --out_path asr_harmbench.json        # near-OOD
-python run_asr.py --model_path <model> --prompts_path prompts/ood_semantic_test.csv --batch_size 16 --out_path asr_semantic_ood.json  # far-OOD, content
-python run_asr.py --model_path <model> --prompts_path prompts/attack_ood_jailbreakllms.csv --batch_size 16 --out_path asr_attack_ood.json  # far-OOD, wrapper
-python run_asr.py --model_path <model> --prompts_path prompts/ood_full_pool.csv --batch_size 16 --out_path asr_full_pool.json          # far-OOD, unfiltered pool (25,847 prompts)
+python run_asr.py --model_path <model> --prompts_path prompts/advbench_malicious.csv --batch_size 32 --max_batch_tokens 8192 --out_path asr_advbench.json    # baseline
+python run_asr.py --model_path <model> --prompts_path prompts/harmbench_eval.csv --batch_size 32 --max_batch_tokens 8192 --out_path asr_harmbench.json        # near-OOD
+python run_asr.py --model_path <model> --prompts_path prompts/ood_semantic_test.csv --batch_size 32 --max_batch_tokens 8192 --out_path asr_semantic_ood.json  # far-OOD, content
+python run_asr.py --model_path <model> --prompts_path prompts/attack_ood_jailbreakllms.csv --batch_size 32 --max_batch_tokens 8192 --out_path asr_attack_ood.json  # far-OOD, wrapper
+python run_asr.py --model_path <model> --prompts_path prompts/ood_full_pool.csv --batch_size 32 --max_batch_tokens 8192 --out_path asr_full_pool.json          # far-OOD, unfiltered pool (25,847 prompts)
 ```
 
 Key flags:
@@ -163,12 +163,22 @@ Key flags:
   own gemma-2b runs; raise this if your target model tends to write
   longer responses before getting to the harmful content, or the judge
   may see a truncated, ambiguous response.
-- `--batch_size` (default 1) — prompts generated per forward pass.
-  Generation is left-padded, so batching only changes speed, not each
-  prompt's individual output. 16 is a reasonable default on a 48GB-class
-  GPU with a 7-8B target model; drop it if you OOM. Worth using for
-  `ood_full_pool.csv` specifically — at batch_size=1 that set alone is
-  ~24hrs of sequential generation; batch_size=16 brings it to roughly 1.5hrs.
+- `--batch_size` (default 1) — max prompts per forward pass.
+  `--max_batch_tokens` (default 8192) — caps `batch_size * padded_seq_len`,
+  not just prompt count. These prompt sets are extremely length-skewed
+  (`ood_semantic_test.csv` ranges ~10-2,658 tokens, `attack_ood_
+  jailbreakllms.csv` up to 7,113), and HF's `generate()` pads every
+  sequence in a batch to the longest one and computes prefill logits for
+  the whole padded batch — a fixed `--batch_size` alone can OOM on a long
+  outlier even at a small batch size (confirmed: `--batch_size 16` needed
+  ~20GB for that one tensor on a single 2,658-token prompt padded across a
+  batch). `run_asr.py` sorts prompts by length and packs batches under the
+  token budget, so `--batch_size 32 --max_batch_tokens 8192` is safe on a
+  48GB-class GPU with a 7-8B target model — a lone very long prompt just
+  runs as its own batch of 1. Generation is left-padded, so batching only
+  changes speed, not each prompt's individual output. Worth using for
+  `ood_full_pool.csv` specifically — unbatched, that set alone is ~24hrs
+  of sequential generation; batched, roughly 1.5hrs.
 - `--max_prompts N` — truncate for a quick smoke test before a full run.
 - `--out_path` — where the full per-prompt result JSON is written
   (default `asr_result.json`).

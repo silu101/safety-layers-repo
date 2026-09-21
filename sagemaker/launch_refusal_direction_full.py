@@ -37,12 +37,14 @@ estimator = PyTorch(
     volume_size=150,
     sagemaker_session=session,
     base_job_name="refusal-direction-full",
-    max_run=4 * 60 * 60,  # real scale: extract_direction (~128+32 examples,
-                          # vs. the smoke test's 10+5) + 4 full ASR sweeps
-                          # (520+400+520+520=1960 prompts total, sequential
-                          # generation, classifier reloaded fresh each of
-                          # the 4 run_asr.py calls) -- generous margin over
-                          # a rough ~2-3hr estimate, first real-scale run.
+    max_run=7 * 60 * 60,  # real scale: extract_direction (~128+32 examples)
+                          # + 5 full ASR sweeps at batch_size=16 (520+400+
+                          # 520+520+25847=27807 prompts total, classifier
+                          # reloaded fresh each of the 5 run_asr.py calls).
+                          # The full pool alone is reasoned at ~1.5hr batched
+                          # (vs. ~24hr unbatched); generous margin since
+                          # this is the first real-scale run with the full
+                          # pool included.
     environment={
         "HF_TOKEN": hf_token,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",

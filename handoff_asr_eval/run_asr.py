@@ -55,18 +55,48 @@ def load_model_and_tokenizer(model_path: str, dtype: str, device_map: str):
     return model, tokenizer
 
 
+def apply_template(tokenizer, prompt: str) -> str:
+    if tokenizer.chat_template is not None:
+        return tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+    return prompt
+
+
+def build_length_bucketed_batches(prompts: list[str], tokenizer, max_batch_size: int, max_batch_tokens: int) -> list[list[int]]:
+    # HF's generate() pads every sequence in a batch to the longest one, and
+    # computes prefill logits (batch x padded_len x vocab_size, fp32) for the
+    # whole padded batch at once. With prompt lengths this skewed --
+    # ood_semantic_test.csv ranges from ~10 to 2,658 tokens, attack_ood_
+    # jailbreakllms.csv up to 7,113 -- a single long outlier padding out an
+    # otherwise-short batch can blow past available VRAM even at a small
+    # fixed batch_size (confirmed: batch_size=16 OOM'd needing ~20GB just
+    # for that one tensor, on a prompt near the 2,658-token max). Sorting by
+    # length and capping batch_size*padded_len (not just batch_size) bounds
+    # that tensor's size regardless of how skewed the distribution is.
+    lengths = [len(tokenizer(apply_template(tokenizer, p))["input_ids"]) for p in prompts]
+    order = sorted(range(len(prompts)), key=lambda i: lengths[i])
+
+    batches = []
+    current: list[int] = []
+    current_max_len = 0
+    for idx in order:
+        L = lengths[idx]
+        candidate_max_len = max(current_max_len, L)
+        candidate_size = len(current) + 1
+        if current and (candidate_size > max_batch_size or candidate_size * candidate_max_len > max_batch_tokens):
+            batches.append(current)
+            current, current_max_len = [idx], L
+        else:
+            current.append(idx)
+            current_max_len = candidate_max_len
+    if current:
+        batches.append(current)
+    return batches
+
+
 def generate_responses_batch(model, tokenizer, prompts: list[str], max_new_tokens: int) -> list[str]:
     import torch
 
-    # Uses the tokenizer's chat template if the model has one (most modern
-    # instruct models do) -- falls back to the raw prompt otherwise. Verify
-    # this matches how your target model expects to be prompted; a mismatch
-    # here silently changes ASR without erroring.
-    if tokenizer.chat_template is not None:
-        texts = [tokenizer.apply_chat_template([{"role": "user", "content": p}], tokenize=False, add_generation_prompt=True)
-                  for p in prompts]
-    else:
-        texts = prompts
+    texts = [apply_template(tokenizer, p) for p in prompts]
     inputs = tokenizer(texts, return_tensors="pt", padding=True)
     device = next(model.parameters()).device
     input_ids = inputs["input_ids"].to(device)
@@ -82,12 +112,18 @@ def generate_responses_batch(model, tokenizer, prompts: list[str], max_new_token
     return [tokenizer.decode(seq, skip_special_tokens=True) for seq in new_tokens]
 
 
-def generate_all_responses(model, tokenizer, prompts: list[str], max_new_tokens: int, batch_size: int) -> list[str]:
-    responses = []
-    for i in range(0, len(prompts), batch_size):
-        batch = prompts[i: i + batch_size]
-        responses.extend(generate_responses_batch(model, tokenizer, batch, max_new_tokens))
-        print(f"  generated {min(i + batch_size, len(prompts))}/{len(prompts)}", flush=True)
+def generate_all_responses(model, tokenizer, prompts: list[str], max_new_tokens: int,
+                            max_batch_size: int, max_batch_tokens: int) -> list[str]:
+    batches = build_length_bucketed_batches(prompts, tokenizer, max_batch_size, max_batch_tokens)
+    responses = [None] * len(prompts)
+    done = 0
+    for batch_indices in batches:
+        batch_prompts = [prompts[i] for i in batch_indices]
+        batch_responses = generate_responses_batch(model, tokenizer, batch_prompts, max_new_tokens)
+        for i, r in zip(batch_indices, batch_responses):
+            responses[i] = r
+        done += len(batch_indices)
+        print(f"  generated {done}/{len(prompts)} (batch size {len(batch_indices)})", flush=True)
     return responses
 
 
@@ -100,7 +136,12 @@ def main():
     ap.add_argument("--device_map", default="auto")
     ap.add_argument("--max_new_tokens", type=int, default=256)
     ap.add_argument("--max_prompts", type=int, default=None, help="Truncate for a quick smoke test")
-    ap.add_argument("--batch_size", type=int, default=1, help="Prompts generated per forward pass")
+    ap.add_argument("--batch_size", type=int, default=1, help="Max prompts per forward pass")
+    ap.add_argument("--max_batch_tokens", type=int, default=8192,
+                     help="Caps batch_size * padded_seq_len (bounds the prefill logits tensor's size, "
+                          "which scales with padded length, not just prompt count -- see "
+                          "build_length_bucketed_batches). A single very long prompt can still exceed "
+                          "this alone; it just runs as a batch of 1 in that case.")
     ap.add_argument("--out_path", default="asr_result.json")
     args = ap.parse_args()
 
@@ -112,8 +153,8 @@ def main():
     print(f"Loading target model: {args.model_path}")
     model, tokenizer = load_model_and_tokenizer(args.model_path, args.dtype, args.device_map)
 
-    print(f"Generating responses (batch_size={args.batch_size})...")
-    responses = generate_all_responses(model, tokenizer, prompts, args.max_new_tokens, args.batch_size)
+    print(f"Generating responses (batch_size<={args.batch_size}, max_batch_tokens={args.max_batch_tokens})...")
+    responses = generate_all_responses(model, tokenizer, prompts, args.max_new_tokens, args.batch_size, args.max_batch_tokens)
 
     # Free the target model before loading the judge -- the two together
     # (a 7B+ target plus the 13B judge) can exceed a single GPU's VRAM if
@@ -138,6 +179,7 @@ def main():
         "model_path": args.model_path,
         "prompts_path": args.prompts_path,
         "batch_size": args.batch_size,
+        "max_batch_tokens": args.max_batch_tokens,
         "n_prompts": len(prompts),
         "asr": asr,
         "n_compliant": sum(compliant),

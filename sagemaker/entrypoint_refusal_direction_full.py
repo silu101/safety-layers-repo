@@ -3,8 +3,18 @@ Full-scale (not smoke-test) run of the refusal-direction-ood package,
 pulled fresh from GitHub. Unlike entrypoint_refusal_direction_smoketest.py,
 this does NOT patch pipeline/config.py -- uses the paper's own real
 defaults (n_train=128, n_val=32, n_test=100), and runs the full ASR sweep
-(AdvBench baseline, HarmBench, semantic-OOD, attack-OOD), not a 5-prompt
-check.
+(AdvBench baseline, HarmBench, semantic-OOD, attack-OOD, full unfiltered
+OOD pool), not a 5-prompt check. Uses length-bucketed batched generation
+(run_asr.py's build_length_bucketed_batches) -- a fixed batch_size=16
+OOM'd on g6e.4xlarge's 48GB L40S partway through ood_semantic_test.csv in
+the 2026-09-21 05:31 UTC run (tried to allocate 20.3GB: HF's generate()
+pads every sequence in a batch to the longest one and computes prefill
+logits for the whole padded batch, and these prompt sets are extremely
+length-skewed -- ood_semantic_test.csv up to 2,658 tokens,
+attack_ood_jailbreakllms.csv up to 7,113, vs. means of ~80-600). Capping
+batch_size*padded_len (--max_batch_tokens, default 8192 here) instead of
+just prompt count bounds that tensor regardless of the outlier, so
+batch_size itself can stay generous (32) for the (common) short prompts.
 """
 import json
 import os
@@ -71,13 +81,15 @@ def main():
         ("harmbench_eval.csv", "asr_harmbench.json"),
         ("ood_semantic_test.csv", "asr_semantic_ood.json"),
         ("attack_ood_jailbreakllms.csv", "asr_attack_ood.json"),
+        ("ood_full_pool.csv", "asr_full_pool.json"),
     ]
     for prompts_file, out_file in prompt_sets:
         print("=" * 70, flush=True)
         print(f"[entrypoint] run_asr.py on {prompts_file}", flush=True)
         print("=" * 70, flush=True)
         sh([sys.executable, "run_asr.py", "--model_path", CHECKPOINT_DIR,
-            "--prompts_path", f"prompts/{prompts_file}", "--out_path", f"/tmp/{out_file}"], cwd=str(OUR_DIR))
+            "--prompts_path", f"prompts/{prompts_file}", "--batch_size", "32", "--max_batch_tokens", "8192",
+            "--out_path", f"/tmp/{out_file}"], cwd=str(OUR_DIR))
 
     SM_MODEL_DIR.mkdir(parents=True, exist_ok=True)
     summary = {}
