@@ -183,6 +183,24 @@ Key flags:
 - `--out_path` — where the full per-prompt result JSON is written
   (default `asr_result.json`).
 
+### Multiple GPUs: `run_asr_parallel.py`
+
+If your box has more than one GPU (e.g. a `g6e.12xlarge`, 4x L40S), use
+`run_asr_parallel.py` instead of `run_asr.py` directly — same flags, plus
+`--num_gpus` (default: auto-detected via `torch.cuda.device_count()`).
+It's data parallelism, not model parallelism: an 8B target model already
+fits on one GPU, so it splits the prompt set round-robin across N GPUs,
+runs N independent `run_asr.py` subprocesses (each with its own full
+model + judge copy), and merges the results back in original prompt
+order. Expect close to an N-x speedup, minus each GPU paying its own
+model/judge load time. Same output schema as `run_asr.py`, plus
+`num_gpus`.
+
+```bash
+python run_asr_parallel.py --model_path <model> --prompts_path prompts/ood_full_pool.csv \
+    --batch_size 32 --max_batch_tokens 8192 --out_path asr_full_pool.json
+```
+
 ## Prompt sets included (`prompts/`)
 
 | File | n | What it is |
