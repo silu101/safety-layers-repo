@@ -112,6 +112,14 @@ def main():
     ap.add_argument("--batch_size", type=int, default=128, help="Effective batch size (via gradient accumulation)")
     ap.add_argument("--micro_batch_size", type=int, default=4, help="Per-device batch size")
     ap.add_argument("--cutoff_len", type=int, default=512)
+    ap.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"],
+                     help="Model weights AND training precision. Default bfloat16 matches run_asr.py's "
+                          "default elsewhere in this project. float32 (the old implicit default, since "
+                          "from_pretrained() defaulted to it with no dtype specified) needs vastly more "
+                          "VRAM -- ~32GB just for Llama-3-8B's weights, before gradients/optimizer state "
+                          "for the ~80% of layers SPPFT leaves trainable -- and won't fit a 48GB GPU at "
+                          "this model size (only worked before on a smoke test against gemma-2b-it, "
+                          "where fp32's footprint is ~4x smaller).")
     ap.add_argument("--val_set_size", type=int, default=100)
     ap.add_argument("--warmup_ratio", type=float, default=0.06,
                      help="Fraction of total training steps spent warming up, not a fixed step count -- "
@@ -127,8 +135,11 @@ def main():
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
+    torch_dtype = dtype_map[args.dtype]
+
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, padding_side="right", use_fast=False)
-    model = AutoModelForCausalLM.from_pretrained(args.base_model, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=torch_dtype, device_map="auto")
 
     if not args.no_freeze:
         freeze_layers(model, args.begin_layer, args.end_layer)
@@ -180,6 +191,8 @@ def main():
             learning_rate=args.learning_rate,
             logging_steps=10,
             optim="adamw_torch",
+            bf16=(args.dtype == "bfloat16"),
+            fp16=(args.dtype == "float16"),
             # "epoch", not a fixed step count -- eval_steps/save_steps=550
             # (the original paper's own value, sized for a much larger
             # dataset) never fires at all on a smaller one: with D_N's
