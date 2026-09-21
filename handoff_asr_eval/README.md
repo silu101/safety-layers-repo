@@ -150,10 +150,11 @@ as the fixed baseline (identification/train/val distribution) -- not to
 whichever OOD set you happened to run right before it:
 
 ```bash
-python run_asr.py --model_path <model> --prompts_path prompts/advbench_malicious.csv --out_path asr_advbench.json    # baseline
-python run_asr.py --model_path <model> --prompts_path prompts/harmbench_eval.csv --out_path asr_harmbench.json        # near-OOD
-python run_asr.py --model_path <model> --prompts_path prompts/ood_semantic_test.csv --out_path asr_semantic_ood.json  # far-OOD, content
-python run_asr.py --model_path <model> --prompts_path prompts/attack_ood_jailbreakllms.csv --out_path asr_attack_ood.json  # far-OOD, wrapper
+python run_asr.py --model_path <model> --prompts_path prompts/advbench_malicious.csv --batch_size 16 --out_path asr_advbench.json    # baseline
+python run_asr.py --model_path <model> --prompts_path prompts/harmbench_eval.csv --batch_size 16 --out_path asr_harmbench.json        # near-OOD
+python run_asr.py --model_path <model> --prompts_path prompts/ood_semantic_test.csv --batch_size 16 --out_path asr_semantic_ood.json  # far-OOD, content
+python run_asr.py --model_path <model> --prompts_path prompts/attack_ood_jailbreakllms.csv --batch_size 16 --out_path asr_attack_ood.json  # far-OOD, wrapper
+python run_asr.py --model_path <model> --prompts_path prompts/ood_full_pool.csv --batch_size 16 --out_path asr_full_pool.json          # far-OOD, unfiltered pool (25,847 prompts)
 ```
 
 Key flags:
@@ -162,6 +163,12 @@ Key flags:
   own gemma-2b runs; raise this if your target model tends to write
   longer responses before getting to the harmful content, or the judge
   may see a truncated, ambiguous response.
+- `--batch_size` (default 1) — prompts generated per forward pass.
+  Generation is left-padded, so batching only changes speed, not each
+  prompt's individual output. 16 is a reasonable default on a 48GB-class
+  GPU with a 7-8B target model; drop it if you OOM. Worth using for
+  `ood_full_pool.csv` specifically — at batch_size=1 that set alone is
+  ~24hrs of sequential generation; batch_size=16 brings it to roughly 1.5hrs.
 - `--max_prompts N` — truncate for a quick smoke test before a full run.
 - `--out_path` — where the full per-prompt result JSON is written
   (default `asr_result.json`).
@@ -177,6 +184,7 @@ Key flags:
 | `harmbench_eval.csv` | 400 | Full official HarmBench release (200 standard + 100 contextual + 100 copyright) — a near-OOD point, known to partially overlap AdvBench |
 | `ood_semantic_test.csv` | 520 | Semantic-OOD: 104 prompts each from 5 categories confirmed OOD relative to AdvBench (hate/discrimination, harassment, sexual content, privacy, political misinformation) — see the parent repo's `docs/DATASET_METADATA.md` and `scripts/build_ood_semantic_test.py` for how these were curated |
 | `attack_ood_jailbreakllms.csv` | 520 | Attack-OOD: the same AdvBench goals, each wrapped in a real-world jailbreak template (Shen et al. 2024) — holds the harmful goal fixed, varies only the wrapper |
+| `ood_full_pool.csv` | 25,847 | Full unfiltered OOD pool: every candidate across all 14 categories (the 5 confirmed-OOD categories plus 10 borderline/covered ones) from the OOD Pool Inspector, no similarity-to-AdvBench threshold applied — tests whether the curated set's threshold filtering was doing real work; see `scripts/build_ood_full_pool.py` |
 
 ## One deliberate deviation from the parent project, worth knowing
 

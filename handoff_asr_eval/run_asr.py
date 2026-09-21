@@ -44,7 +44,10 @@ def load_model_and_tokenizer(model_path: str, dtype: str, device_map: str):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     dtype_map = {"auto": "auto", "float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, padding_side="right")
+    # left padding is required for batched decoder-only generation -- with
+    # right padding, shorter sequences in a batch would have generation
+    # continue from a mid-sequence pad token instead of the true last token.
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, padding_side="left")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=dtype_map.get(dtype, "auto"), device_map=device_map)
@@ -52,7 +55,7 @@ def load_model_and_tokenizer(model_path: str, dtype: str, device_map: str):
     return model, tokenizer
 
 
-def generate_response(model, tokenizer, prompt: str, max_new_tokens: int) -> str:
+def generate_responses_batch(model, tokenizer, prompts: list[str], max_new_tokens: int) -> list[str]:
     import torch
 
     # Uses the tokenizer's chat template if the model has one (most modern
@@ -60,10 +63,11 @@ def generate_response(model, tokenizer, prompt: str, max_new_tokens: int) -> str
     # this matches how your target model expects to be prompted; a mismatch
     # here silently changes ASR without erroring.
     if tokenizer.chat_template is not None:
-        text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+        texts = [tokenizer.apply_chat_template([{"role": "user", "content": p}], tokenize=False, add_generation_prompt=True)
+                  for p in prompts]
     else:
-        text = prompt
-    inputs = tokenizer(text, return_tensors="pt")
+        texts = prompts
+    inputs = tokenizer(texts, return_tensors="pt", padding=True)
     device = next(model.parameters()).device
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
@@ -74,8 +78,17 @@ def generate_response(model, tokenizer, prompt: str, max_new_tokens: int) -> str
             max_new_tokens=max_new_tokens, do_sample=False,
             pad_token_id=tokenizer.pad_token_id,
         )
-    new_tokens = out[0][input_ids.shape[1]:]
-    return tokenizer.decode(new_tokens, skip_special_tokens=True)
+    new_tokens = out[:, input_ids.shape[1]:]
+    return [tokenizer.decode(seq, skip_special_tokens=True) for seq in new_tokens]
+
+
+def generate_all_responses(model, tokenizer, prompts: list[str], max_new_tokens: int, batch_size: int) -> list[str]:
+    responses = []
+    for i in range(0, len(prompts), batch_size):
+        batch = prompts[i: i + batch_size]
+        responses.extend(generate_responses_batch(model, tokenizer, batch, max_new_tokens))
+        print(f"  generated {min(i + batch_size, len(prompts))}/{len(prompts)}", flush=True)
+    return responses
 
 
 def main():
@@ -87,6 +100,7 @@ def main():
     ap.add_argument("--device_map", default="auto")
     ap.add_argument("--max_new_tokens", type=int, default=256)
     ap.add_argument("--max_prompts", type=int, default=None, help="Truncate for a quick smoke test")
+    ap.add_argument("--batch_size", type=int, default=1, help="Prompts generated per forward pass")
     ap.add_argument("--out_path", default="asr_result.json")
     args = ap.parse_args()
 
@@ -98,8 +112,8 @@ def main():
     print(f"Loading target model: {args.model_path}")
     model, tokenizer = load_model_and_tokenizer(args.model_path, args.dtype, args.device_map)
 
-    print("Generating responses...")
-    responses = [generate_response(model, tokenizer, p, args.max_new_tokens) for p in prompts]
+    print(f"Generating responses (batch_size={args.batch_size})...")
+    responses = generate_all_responses(model, tokenizer, prompts, args.max_new_tokens, args.batch_size)
 
     # Free the target model before loading the judge -- the two together
     # (a 7B+ target plus the 13B judge) can exceed a single GPU's VRAM if
@@ -123,6 +137,7 @@ def main():
     result = {
         "model_path": args.model_path,
         "prompts_path": args.prompts_path,
+        "batch_size": args.batch_size,
         "n_prompts": len(prompts),
         "asr": asr,
         "n_compliant": sum(compliant),
