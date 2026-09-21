@@ -149,6 +149,12 @@ def main(argv: list[str] | None = None):
     lower_candidates = parse_int_list(args.lower_i_candidates)
 
     t0 = time.time()
+    print(f"\n=== Step 2: baseline over-rejection (no scaling) ===", flush=True)
+    baseline_responses = generate_batch(model, tokenizer, prompter, prompts, cfg,
+                                         args.max_batch_size, args.max_batch_tokens)
+    baseline_r_o = count_rejections(baseline_responses, cfg.model_path)
+    print(f"  baseline R_o (N_o) = {baseline_r_o}/{len(prompts)}  ({time.time()-t0:.0f}s elapsed)", flush=True)
+
     print(f"\n=== Upper-bound sweep: i={args.initial_i} fixed, j in {upper_candidates} ===", flush=True)
     upper_results = []
     for j in upper_candidates:
@@ -175,6 +181,7 @@ def main(argv: list[str] | None = None):
     result = {
         "model_path": args.model_path, "cheng_num": args.cheng_num,
         "initial_i": args.initial_i,
+        "baseline_r_o": baseline_r_o,
         "upper_sweep": upper_results, "confirmed_j": confirmed_j,
         "lower_sweep": lower_results, "confirmed_i": confirmed_i,
         "final_range": [confirmed_i, confirmed_j],
