@@ -107,11 +107,19 @@ def main():
     ap.add_argument("--begin_layer", type=int, required=True, help="First layer to freeze, inclusive")
     ap.add_argument("--end_layer", type=int, required=True, help="Last layer to freeze, inclusive")
     ap.add_argument("--no_freeze", action="store_true", help="Skip freezing entirely -- full fine-tuning, for a full-FT comparison run")
-    ap.add_argument("--learning_rate", type=float, default=1e-4)
+    ap.add_argument("--learning_rate", type=float, default=1e-4,
+                     help="Matches configs/gemma_finetune_sppft_normal.yaml (the verified gemma-2b-it "
+                          "reproduction), not SPPFT.py's own raw script default (3e-5) -- the paper's "
+                          "actual experiments used 1e-4 for gemma. Not independently confirmed for "
+                          "Llama-3-8B specifically; this project hasn't found a per-model breakdown.")
     ap.add_argument("--num_epochs", type=int, default=3)
     ap.add_argument("--batch_size", type=int, default=128, help="Effective batch size (via gradient accumulation)")
     ap.add_argument("--micro_batch_size", type=int, default=4, help="Per-device batch size")
-    ap.add_argument("--cutoff_len", type=int, default=512)
+    ap.add_argument("--cutoff_len", type=int, default=256,
+                     help="256 matches the original paper's SPPFT.py default AND the value actually "
+                          "used in this project's verified gemma-2b-it reproduction (configs/"
+                          "gemma_finetune_sppft_normal.yaml) -- a prior version of this script used "
+                          "512 with no justification; that was a bug, not a deliberate choice.")
     ap.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"],
                      help="Model weights AND training precision. Default bfloat16 matches run_asr.py's "
                           "default elsewhere in this project. float32 (the old implicit default, since "
