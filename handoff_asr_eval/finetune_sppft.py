@@ -113,7 +113,16 @@ def main():
                           "actual experiments used 1e-4 for gemma. Not independently confirmed for "
                           "Llama-3-8B specifically; this project hasn't found a per-model breakdown.")
     ap.add_argument("--num_epochs", type=int, default=3)
-    ap.add_argument("--batch_size", type=int, default=128, help="Effective batch size (via gradient accumulation)")
+    ap.add_argument("--batch_size", type=int, default=4,
+                     help="Effective batch size (via gradient accumulation over --micro_batch_size). "
+                          "The paper's own Table 6 (Appendix A.4.2) gives batch_size=4 for all four "
+                          "models -- a prior version of this script defaulted to 128 (via 32x gradient "
+                          "accumulation), which meant ~21 optimizer steps instead of the paper's real "
+                          "~675 for D_N's 1,000 examples. Same total forward/backward compute either "
+                          "way, but drastically different training dynamics (few large smoothed updates "
+                          "vs. many small noisy ones) -- that mismatch, not just the freeze range, is a "
+                          "likely major contributor to this project's first Llama-3-8B SPPFT run "
+                          "diverging so far from the paper's reported numbers.")
     ap.add_argument("--micro_batch_size", type=int, default=4, help="Per-device batch size")
     ap.add_argument("--cutoff_len", type=int, default=256,
                      help="256 matches the original paper's SPPFT.py default AND the value actually "

@@ -1,13 +1,35 @@
 """
-Full-scale Safety Layers run, the same experiment structure as
-entrypoint_refusal_direction_full.py but for the other method: locate the
-safety layer, SPPFT-finetune with it frozen (D_N scenario only for this
-run -- D_I is a separate follow-up), then run the same 5-set ASR sweep
-(AdvBench baseline, HarmBench, semantic-OOD, attack-OOD, full unfiltered
-OOD pool) against meta-llama/Meta-Llama-3-8B-Instruct, for a direct,
-apples-to-apples comparison with the Refusal Direction run.
+CORRECTED full-scale Safety Layers run for Llama-3-8B-Instruct (D_N
+scenario), fixing two real bugs found after the first attempt
+(2026-09-21, entrypoint_safety_layers_full.py's earlier version):
 
-Pulled fresh from GitHub (handoff_asr_eval/), not local files.
+1. Freeze range was [9,14] -- onset=9 from find_safety_layer.py's onset
+   heuristic, plus a blind 6-layer width borrowed from gemma-2b-it's own
+   paper-reported range. The ACTUAL Llama-3-8B-Instruct safety-layer
+   range, independently derived via the real Section 3.4 boundary-search
+   algorithm (src/safety_layers_repro/run_boundary_search.py, starting
+   from our own onset=9 and first-smoothing=12, alpha=1.2, on the real
+   over-rejection dataset) is [5,11] -- see results/
+   llama3_boundary_search.json. The paper's own reported range for this
+   model is [6,12] (same 7-layer width, shifted by one) -- [5,11] is used
+   here since it's what OUR pipeline derived, not the paper's number.
+2. finetune_sppft.py's batch_size defaulted to 128 (via 32x gradient
+   accumulation) -- the paper's own Table 6 (Appendix A.4.2) gives
+   batch_size=4 for all four models, no accumulation. Same total forward/
+   backward compute either way (~2700 example-presentations for D_N's
+   1,000 examples x 3 epochs), but ~675 real optimizer steps instead of
+   ~21 -- a large difference in training dynamics, now fixed via
+   finetune_sppft.py's own corrected default.
+
+Same 5-set ASR sweep as before (AdvBench baseline, HarmBench, semantic-
+OOD, attack-OOD, full unfiltered OOD pool) against
+meta-llama/Meta-Llama-3-8B-Instruct, for direct comparison with both the
+first (buggy) Safety Layers attempt and the Refusal Direction run.
+
+Pulled fresh from GitHub (handoff_asr_eval/), not local files. Skips
+re-running find_safety_layer.py -- the onset/first-smoothing values it
+would produce are already known and were the actual input to the
+boundary search that derived CONFIRMED_SAFETY_LAYER_RANGE below.
 """
 import json
 import os
@@ -23,13 +45,10 @@ SM_MODEL_DIR = Path(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"))
 MODEL_PATH = "meta-llama/Meta-Llama-3-8B-Instruct"
 CHECKPOINT_DIR = "/tmp/safety_layers_sppft_normal_model"
 
-# Paper's own choice for gemma-2b-it was a 6-layer-wide freeze window
-# around its onset (see handoff_asr_eval/README.md Step 2) -- no
-# established width exists yet for Llama-3-8B specifically, so this
-# reuses that same width as the default assumption. Flagged here, not
-# silently baked in, in case it needs revisiting once the real onset
-# layer for this model is known.
-FREEZE_WIDTH = 5  # end_layer = onset_layer + FREEZE_WIDTH (inclusive range)
+# From src/safety_layers_repro/run_boundary_search.py's real output
+# (results/llama3_boundary_search.json): independently derived, not
+# reused from another model or copied from the paper's own reported [6,12].
+CONFIRMED_SAFETY_LAYER_RANGE = (5, 11)  # (begin_layer, end_layer), inclusive
 
 
 def sh(cmd, **kw):
@@ -51,27 +70,17 @@ def main():
     sh([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     hf_login()
 
-    print("=" * 70, flush=True)
-    print("[entrypoint] Stage 1: find_safety_layer.py", flush=True)
-    print("=" * 70, flush=True)
-    sh([sys.executable, "find_safety_layer.py", "--model_path", MODEL_PATH,
-        "--malicious_path", "prompts/advbench_malicious.csv", "--normal_path", "prompts/normal.csv",
-        "--out_path", "/tmp/safety_layer_result.json"])
-    layer_result = json.load(open("/tmp/safety_layer_result.json"))
-    onset_layer = layer_result["onset_layer"]
-    if onset_layer is None:
-        raise SystemExit("[entrypoint] find_safety_layer.py found no clear onset -- refusing to guess "
-                          "a freeze range. Inspect /tmp/safety_layer_result.json's per-layer diffs manually.")
-    begin_layer, end_layer = onset_layer, onset_layer + FREEZE_WIDTH
-    print(f"[entrypoint] onset_layer={onset_layer} -> freezing layers [{begin_layer}, {end_layer}] inclusive "
-          f"(width={FREEZE_WIDTH + 1}, paper's own gemma-2b-it choice reused as the default assumption)", flush=True)
+    begin_layer, end_layer = CONFIRMED_SAFETY_LAYER_RANGE
+    print(f"[entrypoint] Using independently-derived safety layer range [{begin_layer}, {end_layer}] "
+          f"(from run_boundary_search.py -- see module docstring)", flush=True)
 
     print("=" * 70, flush=True)
-    print("[entrypoint] Stage 2: finetune_sppft.py (D_N scenario)", flush=True)
+    print("[entrypoint] Stage 1: finetune_sppft.py (D_N scenario, batch_size=4 per paper Table 6)", flush=True)
     print("=" * 70, flush=True)
     sh([sys.executable, "finetune_sppft.py", "--base_model", MODEL_PATH,
         "--data_path", "prompts/finetune_normal.json", "--output_dir", CHECKPOINT_DIR,
-        "--begin_layer", str(begin_layer), "--end_layer", str(end_layer)])
+        "--begin_layer", str(begin_layer), "--end_layer", str(end_layer),
+        "--batch_size", "4"])
 
     prompt_sets = [
         ("advbench_malicious.csv", "asr_advbench.json"),
@@ -82,15 +91,15 @@ def main():
     ]
     for prompts_file, out_file in prompt_sets:
         print("=" * 70, flush=True)
-        print(f"[entrypoint] run_asr.py on {prompts_file}", flush=True)
+        print(f"[entrypoint] Stage 2: run_asr.py on {prompts_file}", flush=True)
         print("=" * 70, flush=True)
         sh([sys.executable, "run_asr.py", "--model_path", CHECKPOINT_DIR,
             "--prompts_path", f"prompts/{prompts_file}", "--batch_size", "32", "--max_batch_tokens", "8192",
             "--out_path", f"/tmp/{out_file}"])
 
     SM_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    (SM_MODEL_DIR / "safety_layer_result.json").write_text(json.dumps(layer_result, indent=2))
-    summary = {"onset_layer": onset_layer, "begin_layer": begin_layer, "end_layer": end_layer}
+    summary = {"begin_layer": begin_layer, "end_layer": end_layer,
+               "range_source": "run_boundary_search.py (independently derived, not the paper's own [6,12])"}
     for _, out_file in prompt_sets:
         src = Path(f"/tmp/{out_file}")
         if src.exists():
