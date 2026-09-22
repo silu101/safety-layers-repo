@@ -34,7 +34,7 @@ from pathlib import Path
 from .localization_config import LocalizationConfig
 from .prompter import Prompter
 from .refusal_classifier import count_rejections
-from .scaling import build_scaled_model, load_model_and_tokenizer
+from .scaling import _LLAMA_STYLE_ATTRS, _PHI3_STYLE_ATTRS, build_scaled_model, load_model_and_tokenizer
 
 
 def parse_int_list(s: str) -> list[int]:
@@ -80,9 +80,7 @@ def generate_batch(model, tokenizer, prompter: Prompter, prompts: list[str], cfg
         with torch.no_grad():
             out = model.generate(
                 input_ids=input_ids, attention_mask=attention_mask,
-                max_new_tokens=cfg.max_new_tokens, do_sample=(cfg.temperature > 0),
-                temperature=cfg.temperature if cfg.temperature > 0 else None,
-                top_p=cfg.top_p, top_k=cfg.top_k,
+                max_new_tokens=cfg.max_new_tokens, do_sample=False,  # cfg.temperature is 0.0 by default -- "effectively greedy" per scaling.py's original get_output()
                 eos_token_id=terminators, pad_token_id=tokenizer.pad_token_id,
             )
         new_tokens = out[:, input_ids.shape[1]:]
@@ -91,21 +89,50 @@ def generate_batch(model, tokenizer, prompter: Prompter, prompts: list[str], cfg
     return responses
 
 
+def snapshot_layers(model, cfg: LocalizationConfig, i: int, j: int) -> dict:
+    """Clones the exact weight tensors build_scaled_model would touch for
+    layers [i, j] inclusive, for later bit-exact restoration -- see
+    measure_r_o's docstring for why this matters."""
+    attrs = _PHI3_STYLE_ATTRS if cfg.weight_style == "phi3" else _LLAMA_STYLE_ATTRS
+    if cfg.exclude_o_proj:
+        attrs = [(p, n) for p, n in attrs if n != "o_proj"]
+    snapshot = {}
+    for layer_idx in range(i, j + 1):
+        layer = model.model.layers[layer_idx]
+        for parent_name, proj_name in attrs:
+            proj = getattr(getattr(layer, parent_name), proj_name)
+            snapshot[(layer_idx, parent_name, proj_name)] = proj.weight.detach().clone()
+    return snapshot
+
+
+def restore_layers(model, snapshot: dict) -> None:
+    import torch
+
+    with torch.no_grad():
+        for (layer_idx, parent_name, proj_name), original_weight in snapshot.items():
+            layer = model.model.layers[layer_idx]
+            proj = getattr(getattr(layer, parent_name), proj_name)
+            proj.weight.copy_(original_weight)
+
+
 def measure_r_o(base_model, tokenizer, prompter: Prompter, prompts: list[str], cfg: LocalizationConfig,
                  i: int, j: int, max_batch_size: int, max_batch_tokens: int) -> dict:
     """Scales layers [i, j] INCLUSIVE by cfg.cheng_num, measures R_o, then
-    un-scales (divides back out) so base_model can be reused for the next
-    sweep point without reloading from disk each time."""
+    restores the EXACT original weights (via a pre-scaling snapshot, not by
+    multiplying back by 1/cheng_num) so base_model can be reused for the
+    next sweep point without reloading from disk. Dividing back out would
+    accumulate bf16 rounding error across the ~10 sweep points -- each
+    round-trip is a tiny drift, but by the last lower-bound candidate
+    (after 5 prior scale/restore cycles) the "clean" model each candidate
+    is compared against would no longer be bit-identical to the true
+    original, undermining exactly the small-count comparisons this sweep
+    depends on. Snapshot+copy_() is exact regardless of how many points run."""
+    snapshot = snapshot_layers(base_model, cfg, i, j)
     scale_cfg = LocalizationConfig(**{**cfg.__dict__, "start_num": i, "end_num": j + 1})
     scaled = build_scaled_model(base_model, scale_cfg, tokenizer=tokenizer)  # scales IN PLACE
     responses = generate_batch(scaled, tokenizer, prompter, prompts, cfg, max_batch_size, max_batch_tokens)
     r_o = count_rejections(responses, cfg.model_path)
-
-    # Undo the in-place scaling so the next sweep point starts from the
-    # true original weights, not a compounded double-scale.
-    undo_cfg = LocalizationConfig(**{**cfg.__dict__, "start_num": i, "end_num": j + 1,
-                                      "cheng_num": 1.0 / cfg.cheng_num})
-    build_scaled_model(base_model, undo_cfg, tokenizer=tokenizer)
+    restore_layers(base_model, snapshot)
     return {"i": i, "j": j, "r_o": r_o, "n_prompts": len(prompts)}
 
 
