@@ -128,6 +128,23 @@ def find_gap_onset(mean_nn: np.ndarray, mean_nm: np.ndarray, margin: float = 0.0
     return None
 
 
+def find_first_smoothing(mean_nn: np.ndarray, mean_nm: np.ndarray, onset: int) -> int | None:
+    """First layer after `onset` where the gap (N-N minus N-M) stops
+    increasing vs. the previous layer -- a precise, reproducible reading of
+    the paper's own Step 1 description ("the range [i, j] from the
+    appearance of the gap to the first smoothing"), rather than eyeballing
+    a printed table. Together with `onset` (i), this gives the INITIAL
+    [i, j] range Section 3.4's boundary search (run_boundary_search.py)
+    starts from -- it is not itself the final safety-layer range."""
+    diff = mean_nn - mean_nm
+    if onset is None:
+        return None
+    for layer in range(onset + 1, len(diff)):
+        if diff[layer] <= diff[layer - 1]:
+            return layer
+    return None  # gap never stops increasing within the layers available
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model_path", default="meta-llama/Meta-Llama-3-8B-Instruct")
@@ -157,15 +174,18 @@ def main():
 
     mean_nn, mean_mm, mean_nm = nn.mean(axis=0), mm.mean(axis=0), nm.mean(axis=0)
     onset = find_gap_onset(mean_nn, mean_nm, margin=args.margin)
+    first_smoothing = find_first_smoothing(mean_nn, mean_nm, onset)
 
     print(f"\nOnset layer (N-N vs N-M divergence, margin={args.margin}): {onset}")
+    print(f"First smoothing layer (initial upper bound j): {first_smoothing}")
+    print(f"Initial safety-layer range for Section 3.4's boundary search: [{onset}, {first_smoothing}]")
     print("Per-layer (N-N minus N-M):")
     for i, (a, b) in enumerate(zip(mean_nn, mean_nm)):
         print(f"  layer {i:2d}: N-N={a:.4f}  N-M={b:.4f}  diff={a-b:+.4f}")
 
     result = {
         "model_path": args.model_path, "r": args.r, "margin": args.margin,
-        "onset_layer": onset, "n_layers": len(mean_nn),
+        "onset_layer": onset, "first_smoothing_layer": first_smoothing, "n_layers": len(mean_nn),
         "mean_nn": mean_nn.tolist(), "mean_mm": mean_mm.tolist(), "mean_nm": mean_nm.tolist(),
     }
     with open(args.out_path, "w") as f:
